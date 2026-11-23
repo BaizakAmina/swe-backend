@@ -76,6 +76,12 @@ def outbox(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     return notifications.MEMORY_OUTBOX
 
 
+@pytest.fixture(autouse=True)
+def no_order_sweeper(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The background order sweep (app lifespan) would run outside the per-test transaction."""
+    monkeypatch.setattr(get_settings(), "order_sweep_interval_seconds", 0)
+
+
 @pytest.fixture
 def app_client() -> TestClient:
     """Client without a database (health checks, error formatting)."""

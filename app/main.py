@@ -5,11 +5,12 @@ from app.api.v1 import api_router
 from app.api.v1.health import router as health_router
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.workers.order_sweeper import lifespan
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug)
+    app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,

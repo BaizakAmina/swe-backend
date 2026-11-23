@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # Orders
     reservation_ttl_minutes: int = 10
+    # Background sweep of expired reservations (seconds between runs; 0 disables it).
+    order_sweep_interval_seconds: float = 30.0
 
     # Email (MailHog in dev)
     smtp_host: str = "localhost"

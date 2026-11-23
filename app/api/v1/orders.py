@@ -15,6 +15,7 @@ from app.schemas.orders import (
     RefundRead,
     RefundRequest,
 )
+from app.services import orders as svc
 from app.services import views
 
 router = APIRouter(tags=["orders & payments"])
@@ -22,23 +23,29 @@ router = APIRouter(tags=["orders & payments"])
 
 @router.post("/orders", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
 def create_order(data: OrderCreate, user: VerifiedUser, db: DbSession) -> OrderRead:
-    """Reserves inventory atomically for ``reserved_until``. Free orders are completed at once."""
-    not_implemented("BE-14")
+    """Reserves inventory atomically for ``reserved_until``. Free orders are completed at once.
+
+    Prices are taken from the server; 409 ``sold_out`` when not enough tickets are left.
+    """
+    return views.order_to_read(db, svc.create_order(db, user, data))
 
 
 @router.get("/orders/{order_id}", response_model=OrderRead)
 def get_order(order_id: uuid.UUID, user: CurrentUser, db: DbSession) -> OrderRead:
-    not_implemented("BE-14")
+    """Buyer, the event organizer or a platform admin."""
+    return views.order_to_read(db, svc.get_order(db, user, order_id))
 
 
 @router.post("/orders/{order_id}/cancel", response_model=OrderRead)
 def cancel_pending_order(order_id: uuid.UUID, user: CurrentUser, db: DbSession) -> OrderRead:
-    not_implemented("BE-14")
+    """Cancel a pending order and return its reservation."""
+    return views.order_to_read(db, svc.cancel(db, user, order_id))
 
 
 @router.post("/orders/{order_id}/register-free", response_model=OrderRead)
 def register_free(order_id: uuid.UUID, user: CurrentUser, db: DbSession) -> OrderRead:
-    not_implemented("BE-14")
+    """Complete a pending order with a zero total without payment."""
+    return views.order_to_read(db, svc.register_free(db, user, order_id))
 
 
 @router.post("/orders/{order_id}/pay", response_model=PaymentRead)
