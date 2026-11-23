@@ -27,3 +27,7 @@ def send_password_reset(user: User, token: str) -> None:
 def send_event_cancelled(db: Session, event: Event) -> None:
     """Notify holders of valid tickets that the event was cancelled (delivery in BE-19)."""
     logger.info("event_cancelled event=%s", event.id)
+
+
+def send_staff_assigned(user: User, event: Event) -> None:
+    logger.info("staff_assigned to=%s event=%s", user.email, event.id)
