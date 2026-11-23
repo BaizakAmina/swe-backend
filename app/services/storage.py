@@ -1,5 +1,7 @@
-"""Object storage (MinIO / S3 in dev and demo; an in-memory dict in tests)."""
+"""Object storage: any S3-compatible service (SeaweedFS in docker compose; an in-memory dict in
+tests). The bucket is created on first use."""
 
+import contextlib
 from functools import lru_cache
 from typing import Any
 
@@ -18,7 +20,7 @@ def _client() -> Any:
     from botocore.config import Config
 
     s = get_settings()
-    return boto3.client(
+    client = boto3.client(
         "s3",
         endpoint_url=s.s3_endpoint_url,
         aws_access_key_id=s.s3_access_key,
@@ -26,6 +28,12 @@ def _client() -> Any:
         region_name="us-east-1",
         config=Config(signature_version="s3v4", connect_timeout=3, retries={"max_attempts": 2}),
     )
+    try:
+        client.head_bucket(Bucket=s.s3_bucket)
+    except Exception:  # noqa: BLE001 — missing bucket (or storage down: put() reports it)
+        with contextlib.suppress(Exception):
+            client.create_bucket(Bucket=s.s3_bucket)
+    return client
 
 
 def _memory() -> bool:
