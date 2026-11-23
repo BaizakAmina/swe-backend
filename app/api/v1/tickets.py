@@ -1,11 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, StaffedEvent
 from app.api.v1._stub import not_implemented
 from app.models.enums import TicketStatus
-from app.schemas.common import Page
+from app.schemas.common import Page, Pagination
 from app.schemas.tickets import (
     AttendeeRow,
     CheckInRequest,
@@ -13,6 +13,7 @@ from app.schemas.tickets import (
     CheckInStats,
     TicketRead,
 )
+from app.services import views
 
 router = APIRouter(tags=["tickets"])
 checkin_router = APIRouter(tags=["check-in (mobile)"])
@@ -22,12 +23,15 @@ checkin_router = APIRouter(tags=["check-in (mobile)"])
 def my_tickets(
     user: CurrentUser, db: DbSession, upcoming: bool | None = None, limit: int = 20, offset: int = 0
 ) -> Page[TicketRead]:
-    not_implemented("BE-20")
+    """Tickets I bought or that were issued to my email. ``?upcoming=true`` for the wallet."""
+    page = Pagination(limit=max(1, min(limit, 100)), offset=max(offset, 0))
+    return views.my_tickets(db, user, page, upcoming)
 
 
 @router.get("/tickets/{ticket_id}", response_model=TicketRead)
 def get_ticket(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> TicketRead:
-    not_implemented("BE-20")
+    """Buyer, attendee (same email), event organizer or platform admin. No payment data."""
+    return views.ticket_to_read(db, views.get_ticket_for_user(db, user, ticket_id))
 
 
 @router.get(
@@ -58,7 +62,9 @@ def event_attendees(
     limit: int = 50,
     offset: int = 0,
 ) -> Page[AttendeeRow]:
-    not_implemented("BE-20")
+    """Search by name, email or ticket code; filter by ticket type and status."""
+    page = Pagination(limit=max(1, min(limit, 200)), offset=max(offset, 0))
+    return views.attendees(db, event, page, q, ticket_type_id, ticket_status)
 
 
 @router.get(
@@ -66,8 +72,12 @@ def event_attendees(
     response_model=None,
     responses={200: {"content": {"text/csv": {}}}},
 )
-def event_attendees_csv(event: ManagedEvent, db: DbSession) -> str:
-    not_implemented("BE-20")
+def event_attendees_csv(event: ManagedEvent, db: DbSession) -> Response:
+    return Response(
+        views.attendees_csv(db, event),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="attendees-{event.id}.csv"'},
+    )
 
 
 @checkin_router.post("/checkin/validate", response_model=CheckInResponse)
