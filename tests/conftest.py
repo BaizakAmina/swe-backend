@@ -10,6 +10,7 @@
 
 import os
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -62,6 +63,24 @@ def db(connection: Connection) -> Iterator[Session]:
     )
     yield session
     session.close()
+
+
+@pytest.fixture(autouse=True)
+def outbox(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Captures outgoing notifications instead of sending them."""
+    from app.services import notifications
+
+    sent: list[dict[str, Any]] = []
+
+    def capture(kind: str) -> Any:
+        def _send(user: Any, token: str) -> None:
+            sent.append({"kind": kind, "to": user.email, "token": token})
+
+        return _send
+
+    monkeypatch.setattr(notifications, "send_verify_email", capture("verify_email"))
+    monkeypatch.setattr(notifications, "send_password_reset", capture("password_reset"))
+    return sent
 
 
 @pytest.fixture
