@@ -71,6 +71,7 @@ def outbox(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     from app.services import notifications
 
     monkeypatch.setattr(get_settings(), "email_backend", "memory")
+    monkeypatch.setattr(get_settings(), "storage_backend", "memory")
     notifications.MEMORY_OUTBOX.clear()
     return notifications.MEMORY_OUTBOX
 

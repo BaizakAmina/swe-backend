@@ -13,7 +13,7 @@ from app.schemas.tickets import (
     CheckInStats,
     TicketRead,
 )
-from app.services import views
+from app.services import pdf, qr_image, views
 
 router = APIRouter(tags=["tickets"])
 checkin_router = APIRouter(tags=["check-in (mobile)"])
@@ -39,8 +39,14 @@ def get_ticket(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Ticket
     response_model=None,
     responses={200: {"content": {"application/pdf": {}}}},
 )
-def ticket_pdf(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> bytes:
-    not_implemented("BE-21")
+def ticket_pdf(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Response:
+    """A4 printable ticket with the same code/QR as the digital one. Cancelled/refunded → 410."""
+    ticket = views.get_ticket_for_user(db, user, ticket_id)
+    return Response(
+        pdf.get_or_create_ticket_pdf(db, ticket),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="ticket-{ticket.ticket_code}.pdf"'},
+    )
 
 
 @router.get(
@@ -48,8 +54,13 @@ def ticket_pdf(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> bytes:
     response_model=None,
     responses={200: {"content": {"image/png": {}}}},
 )
-def ticket_qr(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> bytes:
-    not_implemented("BE-21")
+def ticket_qr(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Response:
+    ticket = views.get_ticket_for_user(db, user, ticket_id)
+    return Response(
+        qr_image.make_png(ticket.qr_payload),
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.get("/events/{event_id}/attendees", response_model=Page[AttendeeRow])

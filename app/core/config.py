@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "biletflow"
+    # s3 → MinIO / S3; memory → in-process dict (tests)
+    storage_backend: str = "s3"
 
     # Payments (simulated)
     activation_fee_minor: int = 500_000  # 5 000 KZT
