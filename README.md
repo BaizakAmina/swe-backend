@@ -1,5 +1,6 @@
 # BiletFlow — Backend
-n[![CI](https://github.com/BaizakAmina/swe-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/BaizakAmina/swe-backend/actions/workflows/ci.yml)
+
+[![CI](https://github.com/BaizakAmina/swe-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/BaizakAmina/swe-backend/actions/workflows/ci.yml)
 
 FastAPI · PostgreSQL 16 · SQLAlchemy 2.0 + Alembic.
 
