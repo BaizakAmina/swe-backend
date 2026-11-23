@@ -2,13 +2,12 @@
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
 
-from app.api.deps import CurrentUser, DbSession
-from app.api.v1._stub import not_implemented
+from app.api.deps import CurrentUser, DbSession, OptionalUser
 from app.schemas.common import Page
 from app.schemas.notifications import NotificationRead
-from app.services import notifications
+from app.services import calendar, events, notifications
 
 router = APIRouter()
 
@@ -43,5 +42,11 @@ def mark_read(notification_id: uuid.UUID, user: CurrentUser, db: DbSession) -> N
     responses={200: {"content": {"text/calendar": {}}}},
     tags=["calendar"],
 )
-def event_ics(event_id: uuid.UUID, db: DbSession) -> str:
-    not_implemented("BE-29")
+def event_ics(event_id: uuid.UUID, db: DbSession, user: OptionalUser) -> Response:
+    """Stable UID, event timezone; a cancelled event exports a CANCEL with the same UID."""
+    event = events.get_for_viewer(db, event_id, user)
+    return Response(
+        calendar.build_ics(event),
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="event-{event.id}.ics"'},
+    )

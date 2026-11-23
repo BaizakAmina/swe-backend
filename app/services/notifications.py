@@ -28,6 +28,7 @@ from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.models import Event, Notification, Order, Ticket, TicketType, User
 from app.models.enums import Locale, NotificationChannel, OrderStatus
+from app.services import calendar
 from app.services.email_texts import texts
 
 logger = logging.getLogger("biletflow.notifications")
@@ -69,7 +70,16 @@ def _api(path: str) -> str:
 # ------------------------------------------------------------------ delivery
 
 
-def _send_email(to: str, subject: str, text_body: str, html_body: str) -> None:
+Attachment = tuple[str, bytes, str]  # filename, content, mime type
+
+
+def _send_email(
+    to: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    attachments: list[Attachment] | None = None,
+) -> None:
     settings = get_settings()
     if settings.email_backend == "console":
         logger.info("email to=%s subject=%s\n%s", to, subject, text_body)
@@ -81,6 +91,9 @@ def _send_email(to: str, subject: str, text_body: str, html_body: str) -> None:
     msg["Subject"] = subject
     msg.set_content(text_body)
     msg.add_alternative(html_body, subtype="html")
+    for filename, content, mime in attachments or []:
+        maintype, subtype = mime.split("/", 1)
+        msg.add_attachment(content, maintype=maintype, subtype=subtype, filename=filename)
     with smtplib.SMTP(
         settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds
     ) as smtp:
@@ -99,6 +112,7 @@ def notify(
     email: str | None = None,
     link: str | None = None,
     in_app: bool = False,
+    attachments: list[Attachment] | None = None,
 ) -> Notification | None:
     """Render, send and record one notification. Commits its own rows; never raises."""
     to = email or (user.email if user else None)
@@ -129,10 +143,17 @@ def notify(
         try:
             if get_settings().email_backend == "memory":
                 MEMORY_OUTBOX.append(
-                    {"kind": kind, "to": to, "subject": t["subject"], "text": text_body, **context}
+                    {
+                        "kind": kind,
+                        "to": to,
+                        "subject": t["subject"],
+                        "text": text_body,
+                        "attachments": [a[0] for a in attachments or []],
+                        **context,
+                    }
                 )
             else:
-                _send_email(to, t["subject"], text_body, html_body)
+                _send_email(to, t["subject"], text_body, html_body, attachments)
             if record is not None:
                 record.sent_at = datetime.now(UTC)
         except Exception as exc:  # noqa: BLE001 — delivery must never break the request
@@ -211,6 +232,7 @@ def send_ticket(db: Session, ticket: Ticket) -> None:
             "ticket_id": ticket.id,
         },
         link=_api(f"/api/v1/tickets/{ticket.id}/pdf"),
+        attachments=[("event.ics", calendar.build_ics(event), "text/calendar")],
     )
 
 

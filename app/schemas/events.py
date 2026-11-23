@@ -102,6 +102,7 @@ class EventRead(ORMModel):
     published_at: datetime | None
     cancelled_at: datetime | None
     is_suspended: bool
+    calendar_links: CalendarLinks
     created_at: datetime
     updated_at: datetime
 

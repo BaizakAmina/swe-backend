@@ -23,6 +23,7 @@ dependencies = [
     "qrcode[pil]>=7.4",
     "reportlab>=4.1",
     "boto3>=1.34",
+    "icalendar>=6.0",
 ]
 
 [project.optional-dependencies]
