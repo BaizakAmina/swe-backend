@@ -27,7 +27,7 @@ from app.schemas.events import (
     EventSummary,
     EventUpdate,
 )
-from app.services import audit, notifications, permissions
+from app.services import audit, calendar, notifications, permissions
 from app.services.audit import AuditAction
 from app.services.organizers import get_profile
 
@@ -75,6 +75,7 @@ def to_read(event: Event) -> EventRead:
             "organizer": EventOrganizer.model_validate(event.organizer),
             "lifecycle": compute_lifecycle(event),
             "is_suspended": event.suspended_at is not None,
+            "calendar_links": calendar.links(event),
         }
     )
 
