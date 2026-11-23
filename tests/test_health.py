@@ -6,18 +6,13 @@ from app.core.errors import AppError
 from app.main import create_app
 
 
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(create_app())
+def test_health(app_client: TestClient) -> None:
+    assert app_client.get("/health").json() == {"status": "ok"}
+    assert app_client.get("/api/v1/health").status_code == 200
 
 
-def test_health(client: TestClient) -> None:
-    assert client.get("/health").json() == {"status": "ok"}
-    assert client.get("/api/v1/health").status_code == 200
-
-
-def test_unknown_route_uses_error_format(client: TestClient) -> None:
-    resp = client.get("/nope")
+def test_unknown_route_uses_error_format(app_client: TestClient) -> None:
+    resp = app_client.get("/nope")
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "http_404"
 
