@@ -65,3 +65,10 @@ def make_ticket_type(db: Session, event: Event | None = None, **kw: Any) -> Tick
     db.add(tt)
     db.flush()
     return tt
+
+
+def auth_headers(user: User) -> dict[str, str]:
+    """Bearer header with a fresh access token for ``user``."""
+    from app.core.security import create_access_token
+
+    return {"Authorization": f"Bearer {create_access_token(user.id, user.token_version).token}"}
