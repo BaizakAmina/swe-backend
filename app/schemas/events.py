@@ -134,3 +134,7 @@ class TimelineEntry(BaseModel):
     actor_id: uuid.UUID | None
     actor_name: str | None
     metadata: dict[str, object]
+
+
+class EventCancelRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)

@@ -3,8 +3,6 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.api.deps import DbSession, OrganizerUser
-from app.api.v1._stub import not_implemented
-from app.schemas.events import EventSummary
 from app.schemas.organizers import (
     ActivationChecklist,
     OrganizerProfileCreate,
@@ -73,9 +71,3 @@ def update_payout_account(
     account_id: uuid.UUID, data: PayoutAccountUpdate, user: OrganizerUser, db: DbSession
 ) -> PayoutAccountRead:
     return PayoutAccountRead.model_validate(svc.update_payout_account(db, user, account_id, data))
-
-
-@router.get("/organizers/me/events", response_model=list[EventSummary])
-def my_events(user: OrganizerUser, db: DbSession) -> list[EventSummary]:
-    """Own events, filter ``?lifecycle=&status=``."""
-    not_implemented("BE-11")
