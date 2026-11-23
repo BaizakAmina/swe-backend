@@ -55,12 +55,8 @@ class TicketTypeRead(ORMModel):
     is_hidden: bool
     on_sale: bool
     sellable: bool = Field(description="false for paid tickets until paid sales are activated")
-
-
-class TicketTypeStats(TicketTypeRead):
-    """Organizer view with counters (read-only here; changed only by orders)."""
-
-    quantity_sold: int
-    quantity_reserved: int
-    quantity_refunded: int
-    quantity_checked_in: int
+    # Organizer-only counters (null in the public view). Changed only by the orders service.
+    quantity_sold: int | None = None
+    quantity_reserved: int | None = None
+    quantity_refunded: int | None = None
+    quantity_checked_in: int | None = None
