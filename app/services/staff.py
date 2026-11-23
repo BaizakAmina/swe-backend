@@ -71,7 +71,7 @@ def assign(db: Session, actor: User, event: Event, data: StaffAssignCreate) -> S
     )
     db.commit()
     db.refresh(assignment)
-    notifications.send_staff_assigned(user, event)
+    notifications.send_staff_assigned(db, user, event)
     return _to_read(assignment)
 
 

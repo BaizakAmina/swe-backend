@@ -122,7 +122,7 @@ def register(db: Session, data: RegisterRequest) -> User:
         metadata={"roles": [str(r) for r in roles]},
     )
     db.commit()
-    notifications.send_verify_email(user, raw)
+    notifications.send_verify_email(db, user, raw)
     return user
 
 
@@ -149,7 +149,7 @@ def resend_verification(db: Session, email: str) -> None:
         return
     raw = _issue_one_time_token(db, user, TokenPurpose.VERIFY_EMAIL, VERIFY_TOKEN_TTL)
     db.commit()
-    notifications.send_verify_email(user, raw)
+    notifications.send_verify_email(db, user, raw)
 
 
 def authenticate(db: Session, email: str, password: str) -> User:
@@ -224,7 +224,7 @@ def request_password_reset(db: Session, email: str) -> None:
         return
     raw = _issue_one_time_token(db, user, TokenPurpose.PASSWORD_RESET, RESET_TOKEN_TTL)
     db.commit()
-    notifications.send_password_reset(user, raw)
+    notifications.send_password_reset(db, user, raw)
 
 
 def confirm_password_reset(db: Session, raw_token: str, new_password: str) -> None:
