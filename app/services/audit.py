@@ -21,6 +21,7 @@ Example::
 """
 
 import uuid
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -107,6 +108,8 @@ def log(
         event_id=event_id,
         description=description,
         metadata_=metadata or {},
+        # Set in code (not now() in SQL) so entries within one transaction keep their order.
+        occurred_at=datetime.now(UTC),
     )
     db.add(entry)
     return entry

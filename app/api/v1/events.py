@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, status
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, OptionalUser, OrganizerUser
-from app.api.v1._stub import not_implemented
 from app.models.enums import EventLifecycle, EventStatus
 from app.schemas.common import Page, Pagination, pagination
 from app.schemas.events import (
@@ -17,6 +16,7 @@ from app.schemas.events import (
     TimelineEntry,
 )
 from app.services import events as svc
+from app.services import timeline
 
 router = APIRouter(tags=["events"])
 
@@ -107,8 +107,12 @@ def my_events(
 def event_timeline(
     event: ManagedEvent,
     db: DbSession,
+    page: PageParams,
     action_type: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    actor_id: uuid.UUID | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> Page[TimelineEntry]:
-    not_implemented("BE-27")
+    """Activity log of the event, newest first. ``action_type`` = exact (``event.published``)
+    or a module prefix (``ticket_type``, ``order``, ``campaign``, ``staff``…)."""
+    return timeline.event_timeline(db, event, page, action_type, actor_id, date_from, date_to)
