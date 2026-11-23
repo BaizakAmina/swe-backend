@@ -95,7 +95,7 @@ def order_to_read(db: Session, order: Order) -> OrderRead:
     return orders_to_read(db, [order])[0]
 
 
-def _page_orders(db: Session, stmt: Select[tuple[Order]], page: Pagination) -> Page[OrderRead]:
+def page_orders(db: Session, stmt: Select[tuple[Order]], page: Pagination) -> Page[OrderRead]:
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     orders = db.scalars(
         stmt.options(*_order_options())
@@ -112,7 +112,7 @@ def my_orders(
     stmt = select(Order).where(Order.buyer_user_id == user.id)
     if order_status is not None:
         stmt = stmt.where(Order.status == order_status)
-    return _page_orders(db, stmt, page)
+    return page_orders(db, stmt, page)
 
 
 def event_orders(
@@ -121,7 +121,7 @@ def event_orders(
     stmt = select(Order).where(Order.event_id == event.id)
     if order_status is not None:
         stmt = stmt.where(Order.status == order_status)
-    return _page_orders(db, stmt, page)
+    return page_orders(db, stmt, page)
 
 
 # ------------------------------------------------------------------ tickets
