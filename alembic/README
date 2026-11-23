@@ -1,0 +1,5 @@
+Alembic migrations. Database URL is taken from DATABASE_URL (app.core.config.Settings).
+
+  alembic revision --autogenerate -m "message"   # then review the generated file by hand
+  alembic upgrade head
+  alembic downgrade -1
