@@ -27,7 +27,8 @@ Tests marked `db` need PostgreSQL and run only with `RUN_DB_TESTS=1`:
 
 ```bash
 DB_PORT=5433 docker compose up -d db   # use 5433 if a local Postgres already takes 5432
-export DATABASE_URL=postgresql+psycopg://biletflow:biletflow@localhost:5433/biletflow
+docker compose exec db psql -U biletflow -c "CREATE DATABASE biletflow_test"   # once
+export DATABASE_URL=postgresql+psycopg://biletflow:biletflow@localhost:5433/biletflow_test
 RUN_DB_TESTS=1 pytest
 ```
 
