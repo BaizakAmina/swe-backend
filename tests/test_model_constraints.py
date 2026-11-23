@@ -61,8 +61,8 @@ def _order(db: Session) -> Order:
 
 
 def test_email_is_unique_case_insensitive(db: Session) -> None:
-    make_user(db, email="Ayana@Test.local")
-    expect_violation(db, lambda: make_user(db, email="ayana@test.local"))
+    make_user(db, email="Ayana@Example.com")
+    expect_violation(db, lambda: make_user(db, email="ayana@example.com"))
 
 
 def test_inventory_cannot_be_oversold(db: Session) -> None:

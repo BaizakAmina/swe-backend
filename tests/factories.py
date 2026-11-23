@@ -12,7 +12,7 @@ from app.models.enums import EventStatus, Role, TicketKind
 
 def make_user(db: Session, *, roles: tuple[Role, ...] = (Role.ATTENDEE,), **kw: Any) -> User:
     user = User(
-        email=kw.pop("email", f"user-{uuid.uuid4().hex[:8]}@test.local"),
+        email=kw.pop("email", f"user-{uuid.uuid4().hex[:8]}@example.com"),
         password_hash=kw.pop("password_hash", "not-a-real-hash"),
         full_name=kw.pop("full_name", "Test User"),
         email_verified_at=kw.pop("email_verified_at", datetime.now(UTC)),
