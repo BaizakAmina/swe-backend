@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 EXPECTED_PATHS = [
@@ -31,7 +32,8 @@ def test_openapi_contains_full_contract(app_client: TestClient) -> None:
     assert not missing, missing
 
 
-def test_campaign_resolve_is_not_shadowed_by_id_route(app_client: TestClient) -> None:
-    resp = app_client.get("/api/v1/campaigns/resolve", params={"token": "x"})
-    assert resp.status_code == 501
-    assert resp.json()["error"]["code"] == "not_implemented"
+@pytest.mark.db
+def test_campaign_resolve_is_not_shadowed_by_id_route(client: TestClient) -> None:
+    resp = client.get("/api/v1/campaigns/resolve", params={"token": "x"})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "campaign_not_found"
