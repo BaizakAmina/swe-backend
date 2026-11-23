@@ -6,8 +6,10 @@ interface.
 
 import logging
 
+from sqlalchemy.orm import Session
+
 from app.core.config import get_settings
-from app.models import User
+from app.models import Event, User
 
 logger = logging.getLogger("biletflow.notifications")
 
@@ -20,3 +22,8 @@ def send_verify_email(user: User, token: str) -> None:
 def send_password_reset(user: User, token: str) -> None:
     link = f"{get_settings().public_web_url}/reset-password?token={token}"
     logger.info("password_reset to=%s link=%s", user.email, link)
+
+
+def send_event_cancelled(db: Session, event: Event) -> None:
+    """Notify holders of valid tickets that the event was cancelled (delivery in BE-19)."""
+    logger.info("event_cancelled event=%s", event.id)
