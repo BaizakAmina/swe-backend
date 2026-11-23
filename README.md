@@ -55,7 +55,7 @@ docker compose up --build
 |---|---|
 | API / Swagger | http://localhost:8000/docs |
 | MailHog (emails) | http://localhost:8025 |
-| MinIO console | http://localhost:9001 (minioadmin / minioadmin) |
+| S3 storage (SeaweedFS) | http://localhost:9000 — bucket `biletflow` is created automatically |
 | PostgreSQL | localhost:5432 (biletflow / biletflow) |
 
 Migrations run automatically (`migrate` service) before the API starts. `.env` is optional for compose.

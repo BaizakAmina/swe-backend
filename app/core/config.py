@@ -42,12 +42,12 @@ class Settings(BaseSettings):
     # Public base URL of this API (links to PDFs etc. in emails)
     api_base_url: str = "http://localhost:8000"
 
-    # Object storage (MinIO in dev)
+    # Object storage (S3-compatible: SeaweedFS in docker compose, MinIO/AWS S3 also work)
     s3_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "biletflow"
-    # s3 → MinIO / S3; memory → in-process dict (tests)
+    # s3 → any S3-compatible service; memory → in-process dict (tests)
     storage_backend: str = "s3"
 
     # Payments (simulated)
