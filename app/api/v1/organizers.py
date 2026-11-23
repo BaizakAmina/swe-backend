@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from app.api.deps import CurrentUser, DbSession, OrganizerUser
+from app.api.deps import DbSession, OrganizerUser
 from app.api.v1._stub import not_implemented
 from app.schemas.events import EventSummary
 from app.schemas.organizers import (
@@ -14,13 +14,14 @@ from app.schemas.organizers import (
     PayoutAccountRead,
     PayoutAccountUpdate,
 )
+from app.services import organizers as svc
 
 router = APIRouter(tags=["organizers"])
 
 
 @router.get("/organizers/me", response_model=OrganizerProfileRead)
-def get_my_profile(user: CurrentUser, db: DbSession) -> OrganizerProfileRead:
-    not_implemented("BE-10")
+def get_my_profile(user: OrganizerUser, db: DbSession) -> OrganizerProfileRead:
+    return OrganizerProfileRead.model_validate(svc.require_profile(db, user))
 
 
 @router.post(
@@ -29,30 +30,30 @@ def get_my_profile(user: CurrentUser, db: DbSession) -> OrganizerProfileRead:
 def create_my_profile(
     data: OrganizerProfileCreate, user: OrganizerUser, db: DbSession
 ) -> OrganizerProfileRead:
-    not_implemented("BE-10")
+    return OrganizerProfileRead.model_validate(svc.create_profile(db, user, data))
 
 
 @router.patch("/organizers/me", response_model=OrganizerProfileRead)
 def update_my_profile(
     data: OrganizerProfileUpdate, user: OrganizerUser, db: DbSession
 ) -> OrganizerProfileRead:
-    not_implemented("BE-10")
+    return OrganizerProfileRead.model_validate(svc.update_profile(db, user, data))
 
 
 @router.post("/organizers/me/verify", response_model=OrganizerProfileRead)
 def verify_my_profile(user: OrganizerUser, db: DbSession) -> OrganizerProfileRead:
-    """Simulated organizer verification."""
-    not_implemented("BE-10")
+    """Simulated organizer verification (completes immediately for a complete profile)."""
+    return OrganizerProfileRead.model_validate(svc.verify_profile(db, user))
 
 
 @router.get("/organizers/me/activation-checklist", response_model=ActivationChecklist)
 def activation_checklist(user: OrganizerUser, db: DbSession) -> ActivationChecklist:
-    not_implemented("BE-10")
+    return svc.get_activation_checklist(db, svc.require_profile(db, user))
 
 
 @router.get("/organizers/me/payout-accounts", response_model=list[PayoutAccountRead])
 def list_payout_accounts(user: OrganizerUser, db: DbSession) -> list[PayoutAccountRead]:
-    not_implemented("BE-10")
+    return [PayoutAccountRead.model_validate(a) for a in svc.list_payout_accounts(db, user)]
 
 
 @router.post(
@@ -63,14 +64,15 @@ def list_payout_accounts(user: OrganizerUser, db: DbSession) -> list[PayoutAccou
 def create_payout_account(
     data: PayoutAccountCreate, user: OrganizerUser, db: DbSession
 ) -> PayoutAccountRead:
-    not_implemented("BE-10")
+    """Sandbox reference only (e.g. ``sandbox_acc_123``) — no card numbers or IBANs."""
+    return PayoutAccountRead.model_validate(svc.create_payout_account(db, user, data))
 
 
 @router.patch("/payout-accounts/{account_id}", response_model=PayoutAccountRead)
 def update_payout_account(
     account_id: uuid.UUID, data: PayoutAccountUpdate, user: OrganizerUser, db: DbSession
 ) -> PayoutAccountRead:
-    not_implemented("BE-10")
+    return PayoutAccountRead.model_validate(svc.update_payout_account(db, user, account_id, data))
 
 
 @router.get("/organizers/me/events", response_model=list[EventSummary])
