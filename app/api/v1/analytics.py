@@ -5,8 +5,8 @@ from typing import Literal
 from fastapi import APIRouter
 
 from app.api.deps import DbSession, ManagedEvent, OrganizerUser
-from app.api.v1._stub import not_implemented
 from app.schemas.analytics import EventAnalytics, OrganizerAnalyticsSummary
+from app.services import analytics as svc
 
 router = APIRouter(tags=["analytics"])
 
@@ -20,9 +20,11 @@ def event_analytics(
     ticket_type_id: uuid.UUID | None = None,
     bucket: Literal["hour", "day"] = "day",
 ) -> EventAnalytics:
-    not_implemented("BE-26")
+    """Capacity, revenue (gross / discounts / refunds / net), sales over time (event timezone),
+    breakdowns by ticket type and campaign, attendance. Filters apply to every block."""
+    return svc.event_analytics(db, event, date_from, date_to, ticket_type_id, bucket)
 
 
 @router.get("/organizers/me/analytics/summary", response_model=OrganizerAnalyticsSummary)
 def organizer_summary(user: OrganizerUser, db: DbSession) -> OrganizerAnalyticsSummary:
-    not_implemented("BE-26")
+    return svc.organizer_summary(db, user)
