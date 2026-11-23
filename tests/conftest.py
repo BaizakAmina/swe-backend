@@ -67,20 +67,12 @@ def db(connection: Connection) -> Iterator[Session]:
 
 @pytest.fixture(autouse=True)
 def outbox(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Captures outgoing notifications instead of sending them."""
+    """Emails go to an in-memory list: [{"kind", "to", "subject", "text", **context}]."""
     from app.services import notifications
 
-    sent: list[dict[str, Any]] = []
-
-    def capture(kind: str) -> Any:
-        def _send(user: Any, token: str) -> None:
-            sent.append({"kind": kind, "to": user.email, "token": token})
-
-        return _send
-
-    monkeypatch.setattr(notifications, "send_verify_email", capture("verify_email"))
-    monkeypatch.setattr(notifications, "send_password_reset", capture("password_reset"))
-    return sent
+    monkeypatch.setattr(get_settings(), "email_backend", "memory")
+    notifications.MEMORY_OUTBOX.clear()
+    return notifications.MEMORY_OUTBOX
 
 
 @pytest.fixture

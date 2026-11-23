@@ -35,7 +35,12 @@ class Settings(BaseSettings):
     smtp_port: int = 1025
     smtp_user: str | None = None
     smtp_password: str | None = None
-    mail_from: str = "BiletFlow <no-reply@biletflow.local>"
+    mail_from: str = "BiletFlow <no-reply@biletflow.kz>"
+    # smtp → real SMTP (MailHog in dev); console → log only; memory → kept in a list (tests)
+    email_backend: str = "smtp"
+    smtp_timeout_seconds: float = 5.0
+    # Public base URL of this API (links to PDFs etc. in emails)
+    api_base_url: str = "http://localhost:8000"
 
     # Object storage (MinIO in dev)
     s3_endpoint_url: str = "http://localhost:9000"

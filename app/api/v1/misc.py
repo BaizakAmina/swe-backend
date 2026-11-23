@@ -8,6 +8,7 @@ from app.api.deps import CurrentUser, DbSession
 from app.api.v1._stub import not_implemented
 from app.schemas.common import Page
 from app.schemas.notifications import NotificationRead
+from app.services import notifications
 
 router = APIRouter()
 
@@ -16,7 +17,15 @@ router = APIRouter()
 def my_notifications(
     user: CurrentUser, db: DbSession, unread: bool | None = None, limit: int = 20, offset: int = 0
 ) -> Page[NotificationRead]:
-    not_implemented("BE-19")
+    """In-app notifications, newest first. ``?unread=true`` for the badge."""
+    limit = max(1, min(limit, 100))
+    items, total = notifications.list_in_app(db, user, unread, limit, max(offset, 0))
+    return Page(
+        items=[NotificationRead.model_validate(n) for n in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(
@@ -25,7 +34,7 @@ def my_notifications(
     tags=["notifications"],
 )
 def mark_read(notification_id: uuid.UUID, user: CurrentUser, db: DbSession) -> None:
-    not_implemented("BE-19")
+    notifications.mark_read(db, user, notification_id)
 
 
 @router.get(

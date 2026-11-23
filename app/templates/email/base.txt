@@ -1,0 +1,9 @@
+BiletFlow
+
+{{ t.title }}
+
+{{ t.body }}
+{% if link %}
+{{ t.cta }}: {{ link }}
+{% endif %}
+{% if t.note %}{{ t.note }}{% endif %}
