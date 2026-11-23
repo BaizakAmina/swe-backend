@@ -65,3 +65,23 @@ Backup / restore:
 docker compose --profile tools run --rm backup                       # -> backups/*.dump
 docker compose exec -T db pg_restore -U biletflow -d biletflow --clean < backups/<file>.dump
 ```
+
+## Demo data
+
+```bash
+python -m app.seed            # idempotent
+python -m app.seed --reset    # wipe everything first (dev only)
+docker compose exec api python -m app.seed   # inside Docker
+```
+
+Password for all demo accounts: `demo12345`
+
+| Email | Roles |
+|---|---|
+| admin@biletflow.kz | platform_admin |
+| organizer@biletflow.kz | organizer (verified, payout connected, paid sales active) |
+| organizer2@biletflow.kz | organizer (another one — for 403 checks) |
+| eventadmin@biletflow.kz | event admin of "Almaty Jazz Night" |
+| attendee@biletflow.kz | attendee |
+
+Events: "Almaty Jazz Night" (published; free / Standard 10 000 KZT / VIP 25 000 KZT; promo `DEMO10` −10% on Standard) and a draft "Tech Meetup Astana".
