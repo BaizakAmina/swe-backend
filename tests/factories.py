@@ -72,3 +72,61 @@ def auth_headers(user: User) -> dict[str, str]:
     from app.core.security import create_access_token
 
     return {"Authorization": f"Bearer {create_access_token(user.id, user.token_version).token}"}
+
+
+def make_paid_order(
+    db: Session,
+    buyer: User,
+    ticket_type: TicketType,
+    attendees: list[tuple[str, str]] | None = None,
+    *,
+    status: Any = None,
+    discount_minor: int = 0,
+    promo_code_id: uuid.UUID | None = None,
+    paid_at: datetime | None = None,
+) -> Any:
+    """Paid order with one item + attendee + valid ticket per attendee (bypasses the orders
+    service — for read-side tests). Updates ``quantity_sold``."""
+    from app.models import Attendee, Order, OrderItem, Ticket
+    from app.models.enums import OrderStatus, TicketStatus
+
+    attendees = attendees or [(buyer.full_name, buyer.email)]
+    subtotal = ticket_type.price_minor * len(attendees)
+    order = Order(
+        buyer_user_id=buyer.id,
+        event_id=ticket_type.event_id,
+        status=status or OrderStatus.PAID,
+        subtotal_minor=subtotal,
+        discount_minor=discount_minor,
+        total_minor=subtotal - discount_minor,
+        promo_code_id=promo_code_id,
+        paid_at=paid_at or datetime.now(UTC),
+    )
+    db.add(order)
+    db.flush()
+    for name, email in attendees:
+        item = OrderItem(
+            order_id=order.id,
+            ticket_type_id=ticket_type.id,
+            unit_price_minor=ticket_type.price_minor,
+        )
+        db.add(item)
+        db.flush()
+        attendee = Attendee(order_item_id=item.id, full_name=name, email=email)
+        db.add(attendee)
+        db.flush()
+        code = uuid.uuid4().hex[:12].upper()
+        db.add(
+            Ticket(
+                order_item_id=item.id,
+                event_id=ticket_type.event_id,
+                attendee_id=attendee.id,
+                ticket_code=code,
+                qr_payload=f"T1.{code}.sig",
+                status=TicketStatus.VALID,
+            )
+        )
+    ticket_type.quantity_sold += len(attendees)
+    db.flush()
+    db.refresh(order)
+    return order

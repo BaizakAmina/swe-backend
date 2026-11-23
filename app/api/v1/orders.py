@@ -5,7 +5,7 @@ from fastapi import APIRouter, status
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, VerifiedUser
 from app.api.v1._stub import not_implemented
 from app.models.enums import OrderStatus
-from app.schemas.common import Page
+from app.schemas.common import Page, Pagination
 from app.schemas.orders import (
     ActivationStatusRead,
     OrderCreate,
@@ -15,6 +15,7 @@ from app.schemas.orders import (
     RefundRead,
     RefundRequest,
 )
+from app.services import views
 
 router = APIRouter(tags=["orders & payments"])
 
@@ -68,14 +69,21 @@ def my_orders(
     limit: int = 20,
     offset: int = 0,
 ) -> Page[OrderRead]:
-    not_implemented("BE-20")
+    """My orders, newest first."""
+    page = Pagination(limit=max(1, min(limit, 100)), offset=max(offset, 0))
+    return views.my_orders(db, user, page, order_status)
 
 
 @router.get("/events/{event_id}/orders", response_model=Page[OrderRead])
 def event_orders(
-    event: ManagedEvent, db: DbSession, limit: int = 50, offset: int = 0
+    event: ManagedEvent,
+    db: DbSession,
+    order_status: OrderStatus | None = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> Page[OrderRead]:
-    not_implemented("BE-20")
+    page = Pagination(limit=max(1, min(limit, 100)), offset=max(offset, 0))
+    return views.event_orders(db, event, page, order_status)
 
 
 @router.get("/events/{event_id}/activation", response_model=ActivationStatusRead)
