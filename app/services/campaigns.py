@@ -12,12 +12,13 @@ import uuid
 
 from fastapi import status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, NotFoundError
 from app.models import CampaignTicketType, Event, PromoCode, PromotionalCampaign, TicketType, User
-from app.models.enums import CampaignStatus, EventStatus, EventVisibility
+from app.models.enums import CampaignStatus, DiscountType, EventStatus, EventVisibility
 from app.schemas.campaigns import CampaignCreate, CampaignRead, CampaignResolveRead, CampaignUpdate
 from app.services import audit, permissions
 from app.services.audit import AuditAction
@@ -103,7 +104,14 @@ def _validate_ticket_types(db: Session, event: Event, ids: list[uuid.UUID]) -> N
         )
 
 
-def _log(db: Session, user: User, action: AuditAction, c: PromotionalCampaign, text: str) -> None:
+def _log(
+    db: Session,
+    user: User,
+    action: AuditAction,
+    c: PromotionalCampaign,
+    text: str,
+    metadata: dict[str, object] | None = None,
+) -> None:
     audit.log(
         db,
         actor_id=user.id,
@@ -112,6 +120,7 @@ def _log(db: Session, user: User, action: AuditAction, c: PromotionalCampaign, t
         entity_id=c.id,
         event_id=c.event_id,
         description=text,
+        metadata=metadata,
     )
 
 
@@ -159,9 +168,38 @@ def list_for_event(db: Session, event: Event) -> list[CampaignRead]:
     return [to_read(c) for c in rows]
 
 
+def _lock(db: Session, campaign_id: uuid.UUID) -> PromotionalCampaign:
+    """Campaign row FOR UPDATE — the same lock order creation takes in ``promo.quote``, so an
+    order sees either the old or the new terms, never a mix, and limits can't be overshot."""
+    campaign = db.scalar(
+        select(PromotionalCampaign)
+        .where(PromotionalCampaign.id == campaign_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if campaign is None:
+        raise NotFoundError("campaign")
+    return campaign
+
+
 def update(db: Session, user: User, campaign_id: uuid.UUID, data: CampaignUpdate) -> CampaignRead:
-    campaign = load_managed(db, user, campaign_id)
+    load_managed(db, user, campaign_id)
+    campaign = _lock(db, campaign_id)
     changes = data.model_dump(exclude_unset=True)
+    for field in ("name", "discount_type", "discount_value", "code"):
+        if field in changes and changes[field] is None:
+            raise AppError(
+                "invalid_value", f"{field} cannot be empty", status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    discount_type = changes.get("discount_type", campaign.discount_type)
+    discount_value = changes.get("discount_value", campaign.discount_value)
+    if discount_type == DiscountType.PERCENT and discount_value > 100:
+        raise AppError(
+            "invalid_discount",
+            "Percent discount must be 1–100",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     starts = changes.get("starts_at", campaign.starts_at)
     ends = changes.get("ends_at", campaign.ends_at)
     if starts and ends and ends <= starts:
@@ -176,14 +214,40 @@ def update(db: Session, user: User, campaign_id: uuid.UUID, data: CampaignUpdate
             "limit_below_redemptions",
             f"Code was already redeemed {campaign.redemption_count} times",
         )
+    meta: dict[str, object] = {"fields": sorted(changes)}
+    if "code" in changes:
+        promo_code = db.scalar(select(PromoCode).where(PromoCode.campaign_id == campaign.id))
+        assert promo_code is not None
+        new_code = changes.pop("code")
+        if new_code != promo_code.code:
+            taken = db.scalar(select(PromoCode.id).where(PromoCode.code == new_code))
+            if taken is not None:
+                raise ConflictError("promo_code_taken", "This promo code is already in use")
+            meta["code"] = {"old": promo_code.code, "new": new_code}
+            promo_code.code = new_code
     if "ticket_type_ids" in changes:
         ids = changes.pop("ticket_type_ids") or []
         event = permissions.get_event(db, campaign.event_id)
         _validate_ticket_types(db, event, ids)
         campaign.ticket_types = [CampaignTicketType(ticket_type_id=i) for i in dict.fromkeys(ids)]
+    for field in ("discount_type", "discount_value"):
+        if field in changes and changes[field] != getattr(campaign, field):
+            meta[field] = {"old": str(getattr(campaign, field)), "new": str(changes[field])}
     for field, value in changes.items():
         setattr(campaign, field, value.strip() if isinstance(value, str) else value)
-    _log(db, user, AuditAction.CAMPAIGN_UPDATED, campaign, f"Campaign “{campaign.name}” updated")
+    try:
+        db.flush()
+    except IntegrityError as exc:  # code taken by a concurrent create / rename
+        db.rollback()
+        raise ConflictError("promo_code_taken", "This promo code is already in use") from exc
+    _log(
+        db,
+        user,
+        AuditAction.CAMPAIGN_UPDATED,
+        campaign,
+        f"Campaign “{campaign.name}” updated: {', '.join(sorted(data.model_fields_set))}",
+        meta,
+    )
     db.commit()
     return to_read(_load(db, campaign.id))
 

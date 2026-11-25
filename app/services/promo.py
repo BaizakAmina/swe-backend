@@ -107,6 +107,11 @@ def quote(
     campaign = db.scalar(stmt)
     if campaign is None:  # FK makes this impossible
         raise promo_error("promo_not_found")
+    if lock:
+        # the organizer may have renamed the code while we waited for the campaign lock
+        db.refresh(promo)
+        if promo.code != normalize(code):
+            raise promo_error("promo_not_found")
 
     if campaign.event_id != event_id:
         raise promo_error("promo_wrong_event")
