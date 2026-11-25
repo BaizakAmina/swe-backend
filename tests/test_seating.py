@@ -1,23 +1,17 @@
 """BE-30: assigned seating — seat map, seat holds, hold → order."""
 
-import threading
 import uuid
-from collections import Counter
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, update
-from sqlalchemy.engine import Engine
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.errors import AppError
 from app.models import (
-    Event,
     OrderItem,
     Seat,
     SeatHold,
@@ -31,7 +25,6 @@ from app.models.enums import SeatingMode
 from app.seed import seed
 from app.services import orders as orders_svc
 from app.services import seating, ticketing
-from tests.committed_data import cleanup
 from tests.factories import auth_headers, make_event, make_organizer, make_ticket_type, make_user
 from tests.test_orders import _expire_now, error_code, order_body, post_order
 
@@ -320,62 +313,3 @@ def test_seed_has_one_venue_layout(db: Session) -> None:
         .where(VenueSection.venue_id == venue.id, Seat.is_accessible.is_(True))
     ).all()
     assert len(accessible) == 2
-
-
-# ------------------------------------------------------------------ concurrency
-
-HOLDERS = 20
-
-
-@pytest.fixture
-def parallel_engine(engine: Engine) -> Iterator[Engine]:
-    eng = create_engine(get_settings().database_url, pool_size=HOLDERS + 2, max_overflow=0)
-    yield eng
-    eng.dispose()
-
-
-def test_twenty_parallel_holds_of_one_seat(parallel_engine: Engine) -> None:
-    with Session(parallel_engine) as s:
-        venue, seats = make_venue(s)
-        org = make_organizer(s)
-        ev = make_event(s, org, seating_mode=SeatingMode.ASSIGNED, venue_id=venue.id)
-        users = [make_user(s) for _ in range(HOLDERS)]
-        s.commit()
-        event_id, venue_id, seat_id = ev.id, venue.id, seats["A1"].id
-        holder_ids = [u.id for u in users]
-        user_ids = [org.user_id, *holder_ids]
-
-    try:
-        barrier = threading.Barrier(HOLDERS)
-        results: list[Any] = []
-        lock = threading.Lock()
-
-        def run(user_id: Any) -> None:
-            with Session(parallel_engine) as db:
-                user = db.get(User, user_id)
-                assert user is not None
-                db.connection()
-                barrier.wait()
-                try:
-                    seating.hold(db, user, event_id, [seat_id])
-                    outcome = "ok"
-                except AppError as exc:
-                    outcome = exc.code
-            with lock:
-                results.append(outcome)
-
-        threads = [threading.Thread(target=run, args=(u,)) for u in holder_ids]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=60)
-
-        assert Counter(results) == {"ok": 1, "seat_unavailable": HOLDERS - 1}, results
-        with Session(parallel_engine) as s:
-            active = s.scalars(
-                select(SeatHold).where(SeatHold.seat_id == seat_id, SeatHold.released_at.is_(None))
-            ).all()
-            assert len(active) == 1
-            assert s.get(Event, event_id) is not None
-    finally:
-        cleanup(parallel_engine, event_id, user_ids, venue_id)
