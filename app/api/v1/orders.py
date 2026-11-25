@@ -17,7 +17,7 @@ from app.schemas.orders import (
 )
 from app.services import orders as svc
 from app.services import views
-from app.services.payments import checkout
+from app.services.payments import activation, checkout
 
 router = APIRouter(tags=["orders & payments"])
 
@@ -106,11 +106,22 @@ def event_orders(
 
 @router.get("/events/{event_id}/activation", response_model=ActivationStatusRead)
 def activation_status(event: ManagedEvent, db: DbSession) -> ActivationStatusRead:
-    not_implemented("BE-16")
+    """Checklist, activation fee and whether paid sales are active. Organizer or platform admin."""
+    return activation.get_status(db, event)
 
 
 @router.post("/events/{event_id}/activate-paid-sales", response_model=ActivationStatusRead)
 def activate_paid_sales(
-    data: PayRequest, event: ManagedEvent, user: CurrentUser, db: DbSession
+    data: PayRequest,
+    event: ManagedEvent,
+    user: CurrentUser,
+    db: DbSession,
+    gateway: PaymentGatewayDep,
 ) -> ActivationStatusRead:
-    not_implemented("BE-16")
+    """Pay the activation fee (simulated) and turn on paid ticket sales.
+
+    422 ``activation_checklist_incomplete`` with ``details.missing`` if the checklist isn't done;
+    409 if paid sales are already active. A failed (simulated) payment leaves sales inactive —
+    see ``activation_payment.status`` — and can be retried.
+    """
+    return activation.activate(db, user, event.id, simulate=data.simulate, gateway=gateway)

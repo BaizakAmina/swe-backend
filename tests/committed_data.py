@@ -18,6 +18,7 @@ from app.models import (
     OrderItem,
     OrganizerProfile,
     Payment,
+    PayoutAccount,
     Ticket,
     TicketType,
     User,
@@ -42,11 +43,14 @@ def cleanup(eng: Engine, event_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None
         conn.execute(delete(Notification).where(Notification.user_id.in_(user_ids)))
         conn.execute(delete(Ticket).where(Ticket.event_id == event_id))
         conn.execute(delete(Payment).where(Payment.order_id.in_(order_ids)))
+        conn.execute(delete(Payment).where(Payment.event_id == event_id))
         conn.execute(delete(Attendee).where(Attendee.order_item_id.in_(item_ids)))
         conn.execute(delete(OrderItem).where(OrderItem.order_id.in_(order_ids)))
         conn.execute(delete(Order).where(Order.event_id == event_id))
         conn.execute(delete(TicketType).where(TicketType.event_id == event_id))
         conn.execute(delete(Event).where(Event.id == event_id))
+        profile_ids = select(OrganizerProfile.id).where(OrganizerProfile.user_id.in_(user_ids))
+        conn.execute(delete(PayoutAccount).where(PayoutAccount.organizer_id.in_(profile_ids)))
         conn.execute(delete(OrganizerProfile).where(OrganizerProfile.user_id.in_(user_ids)))
         conn.execute(delete(UserRole).where(UserRole.user_id.in_(user_ids)))
         conn.execute(delete(User).where(User.id.in_(user_ids)))
