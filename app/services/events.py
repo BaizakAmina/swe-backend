@@ -50,6 +50,17 @@ def compute_lifecycle(event: Event, now: datetime | None = None) -> EventLifecyc
     return EventLifecycle.COMPLETED
 
 
+def check_in_open(event: Event, now: datetime | None = None) -> bool:
+    """Door scanning is open for a published event until it ends (doors open before start).
+
+    Single rule for the scanner UI (``can_check_in``) and the check-in endpoint.
+    """
+    return event.status == EventStatus.PUBLISHED and compute_lifecycle(event, now) in (
+        EventLifecycle.UPCOMING,
+        EventLifecycle.ACTIVE,
+    )
+
+
 def lifecycle_clause(lifecycle: EventLifecycle, now: datetime | None = None) -> ColumnElement[bool]:
     """SQL condition equivalent to :func:`compute_lifecycle` (filtering happens in the DB)."""
     now = now or now_utc()

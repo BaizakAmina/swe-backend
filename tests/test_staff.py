@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -84,3 +86,32 @@ def test_assigned_events_skip_cancelled(client: TestClient, setup, db: Session) 
         headers=auth_headers(org_user),
     )
     assert resp.status_code == 409
+
+
+def test_assigned_event_card_fields(client: TestClient, setup, db: Session) -> None:
+    event, _, staffer = setup
+    event.location_address = "12 Abay Ave, Almaty"
+    now = datetime.now(UTC)
+    org = make_organizer(db)
+    live = make_event(db, org, title="Live", starts_at=now - timedelta(hours=1))
+    past = make_event(
+        db, org, title="Past", starts_at=now - timedelta(days=2), ends_at=now - timedelta(days=1)
+    )
+    draft = make_event(db, org, title="Draft", status=EventStatus.DRAFT)
+    for ev in (event, live, past, draft):
+        db.add(StaffAssignment(event_id=ev.id, user_id=staffer.id))
+    db.flush()
+
+    rows = client.get(f"{API}/me/assigned-events", headers=auth_headers(staffer)).json()
+    cards = {e["title"]: e for e in rows}
+    assert cards["Jazz"]["lifecycle"] == "upcoming"
+    assert cards["Jazz"]["location_address"] == "12 Abay Ave, Almaty"
+    assert cards["Live"]["lifecycle"] == "active"
+    assert cards["Past"]["lifecycle"] == "completed"
+    assert {t: c["can_check_in"] for t, c in cards.items()} == {
+        "Jazz": True,
+        "Live": True,
+        "Past": False,
+        "Draft": False,
+    }
+    assert all(c["can_undo"] for c in rows)

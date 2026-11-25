@@ -9,7 +9,7 @@ from app.core.errors import AppError, ConflictError, NotFoundError
 from app.models import Event, StaffAssignment, Ticket, User
 from app.models.enums import EventStatus, StaffRole, TicketStatus, UserStatus
 from app.schemas.staff import AssignedEventRead, StaffAssignCreate, StaffRead
-from app.services import audit, notifications
+from app.services import audit, events, notifications, permissions
 from app.services.audit import AuditAction
 
 
@@ -100,7 +100,8 @@ def remove(db: Session, actor: User, event: Event, user_id: uuid.UUID) -> None:
 
 
 def assigned_events(db: Session, user: User) -> list[AssignedEventRead]:
-    """Events the user scans for (not cancelled), soonest first, with check-in progress."""
+    """Events the user scans for (not cancelled), soonest first, with check-in progress
+    and the flags the scanner UI needs."""
     issued = func.count(Ticket.id).filter(
         Ticket.status.in_([TicketStatus.VALID, TicketStatus.CHECKED_IN])
     )
@@ -119,6 +120,7 @@ def assigned_events(db: Session, user: User) -> list[AssignedEventRead]:
         .group_by(Event.id)
         .order_by(Event.starts_at)
     ).all()
+    now = events.now_utc()
     return [
         AssignedEventRead(
             id=ev.id,
@@ -126,9 +128,13 @@ def assigned_events(db: Session, user: User) -> list[AssignedEventRead]:
             starts_at=ev.starts_at,
             ends_at=ev.ends_at,
             timezone=ev.timezone,
+            lifecycle=events.compute_lifecycle(ev, now),
             location_name=ev.location_name,
+            location_address=ev.location_address,
             tickets_issued=int(n_issued),
             checked_in=int(n_checked),
+            can_check_in=events.check_in_open(ev, now),
+            can_undo=permissions.can_reverse_check_in(db, user, ev),
         )
         for ev, n_issued, n_checked in rows
     ]
