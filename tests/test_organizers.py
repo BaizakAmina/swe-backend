@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import AuditLog
 from app.models.enums import Role
 from tests.factories import auth_headers, make_user
@@ -30,6 +31,9 @@ def test_profile_crud_and_checklist(client: TestClient, org_headers: dict[str, s
         "profile_complete": False,
         "verified": False,
         "payout_account_connected": False,
+        "terms_accepted": False,
+        "terms_version": get_settings().paid_terms_version,
+        "terms_url": "http://localhost:3000/terms/paid-events",
     }
 
     # verification needs contact details
@@ -45,6 +49,11 @@ def test_profile_crud_and_checklist(client: TestClient, org_headers: dict[str, s
         f"{BASE}/payout-accounts", json={"provider_ref": "sandbox_acc_1"}, headers=org_headers
     )
     assert resp.status_code == 201 and resp.json()["status"] == "connected"
+
+    checklist = client.get(f"{BASE}/activation-checklist", headers=org_headers).json()
+    assert checklist["terms_accepted"] is False
+    resp = client.post(f"{BASE}/paid-terms/accept", headers=org_headers)
+    assert resp.status_code == 200 and resp.json()["terms_accepted"] is True
 
     checklist = client.get(f"{BASE}/activation-checklist", headers=org_headers).json()
     assert all(checklist.values())

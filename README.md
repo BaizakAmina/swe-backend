@@ -117,6 +117,7 @@ uvicorn app.main:app --reload
 | `RESERVATION_TTL_MINUTES` | 10 | checkout hold |
 | `PUBLIC_WEB_URL` | `http://localhost:3000` | links in emails / Campaign QR |
 | `API_BASE_URL` | `http://localhost:8000` | links to PDFs in emails |
+| `PAID_TERMS_VERSION` | `2026-11` | current paid-event terms; organizers re-accept after a change |
 | `PUBLIC_API_URL` | *(empty)* | API address in links returned to clients (cover images, calendar); empty → address of the request |
 | `CORS_ORIGINS` | `["http://localhost:3000","http://localhost:5173"]` | allowed web origins (JSON list) |
 | `EMAIL_BACKEND` | `smtp` | `smtp` / `console` / `memory` |

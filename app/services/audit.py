@@ -41,6 +41,7 @@ class AuditAction(StrEnum):
     ORGANIZER_PROFILE_CREATED = "organizer.profile_created"
     ORGANIZER_PROFILE_UPDATED = "organizer.profile_updated"
     ORGANIZER_VERIFIED = "organizer.verified"
+    ORGANIZER_TERMS_ACCEPTED = "organizer.terms_accepted"
     PAYOUT_ACCOUNT_CONNECTED = "payout_account.connected"
     PAYOUT_ACCOUNT_UPDATED = "payout_account.updated"
     # events
