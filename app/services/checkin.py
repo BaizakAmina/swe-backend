@@ -20,7 +20,7 @@ from fastapi import status as http
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ConflictError, NotFoundError
+from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.models import CheckInRecord, Event, OrderItem, Ticket, TicketType, User
 from app.models.enums import CheckInAction, TicketStatus
 from app.schemas.tickets import (
@@ -31,7 +31,7 @@ from app.schemas.tickets import (
     CheckInStatsByType,
     CheckInTicketInfo,
 )
-from app.services import audit, permissions
+from app.services import audit, events, permissions
 from app.services.audit import AuditAction
 from app.services.qr_sign import CampaignQRError, InvalidAdmissionQRError, verify_ticket_payload
 
@@ -142,11 +142,15 @@ def _record(
 def check_in(db: Session, user: User, data: CheckInRequest) -> CheckInResponse:
     """Admit the ticket once. Anything but a valid ticket of this event → error.
 
-    422 ``invalid_qr`` / ``campaign_qr_not_admission``; 409 ``already_checked_in`` (with the
+    409 ``check_in_closed`` outside the scanning window (``events.check_in_open`` — the same
+    rule as the scanner's ``can_check_in`` flag). 422 ``invalid_qr`` /
+    ``campaign_qr_not_admission``; 409 ``already_checked_in`` (with the
     time of the first scan), ``cancelled``, ``refunded``, ``wrong_event``. ``details`` carries
     the same ``result`` / ``ticket`` as ``validate``.
     """
     event = _staffed_event(db, user, data.event_id)
+    if not events.check_in_open(event):
+        raise ConflictError("check_in_closed", "Check-in is closed for this event")
     result, ticket = _resolve(db, event, data.qr_payload, lock=True)
     if result != "valid" or ticket is None:
         unreadable = result in ("invalid_qr", "campaign_qr_not_admission")
@@ -177,7 +181,9 @@ def reverse(
     )
     if ticket is None:
         raise NotFoundError("ticket")
-    _staffed_event(db, user, ticket.event_id)
+    event = permissions.get_event(db, ticket.event_id)
+    if not permissions.can_reverse_check_in(db, user, event):
+        raise ForbiddenError("You may not undo check-ins for this event")
     if ticket.status != TicketStatus.CHECKED_IN:
         raise ConflictError("not_checked_in", f"Ticket is {ticket.status.value}, not checked in")
 

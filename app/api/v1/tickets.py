@@ -107,7 +107,9 @@ def validate_ticket(data: CheckInRequest, user: CurrentUser, db: DbSession) -> C
 def check_in(data: CheckInRequest, user: CurrentUser, db: DbSession) -> CheckInResponse:
     """Admit a ticket once (``result: valid``).
 
-    Errors (``error.code`` = the ``result``; ``error.details`` has ``result`` and ``ticket``):
+    409 ``check_in_closed`` when scanning isn't open (same rule as ``can_check_in`` on
+    ``/me/assigned-events``). Other errors (``error.code`` = the ``result``;
+    ``error.details`` has ``result`` and ``ticket``):
     409 ``already_checked_in`` (message has the time of the first scan), ``cancelled``,
     ``refunded``, ``wrong_event``; 422 ``invalid_qr``, ``campaign_qr_not_admission``.
     """

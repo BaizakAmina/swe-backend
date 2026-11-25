@@ -1,7 +1,7 @@
 """BE-18: check-in API — validate, check-in, reverse, stats."""
 
 from collections import Counter
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -222,3 +222,25 @@ def test_stats(client: TestClient, door, db: Session) -> None:
     stranger = make_user(db)
     url = f"{API}/events/{door.event.id}/checkin-stats"
     assert client.get(url, headers=auth_headers(stranger)).status_code == 403
+
+
+def test_check_in_follows_the_scanner_window(client: TestClient, door, db: Session) -> None:
+    """Same rule as ``can_check_in`` on /me/assigned-events (``events.check_in_open``)."""
+    ticket = door.t["Aru"]
+    door.event.starts_at = datetime.now(UTC) - timedelta(hours=5)
+    door.event.ends_at = datetime.now(UTC) - timedelta(hours=1)
+    db.flush()
+
+    cards = client.get(f"{API}/me/assigned-events", headers=auth_headers(door.staff)).json()
+    assert [c["can_check_in"] for c in cards if c["id"] == str(door.event.id)] == [False]
+
+    resp = scan(client, door.staff, "", body(door.event.id, ticket.qr_payload))
+    assert resp.status_code == 409 and code(resp) == "check_in_closed"
+    db.refresh(ticket)
+    assert ticket.status == TicketStatus.VALID
+    assert db.scalars(select(CheckInRecord).where(CheckInRecord.ticket_id == ticket.id)).all() == []
+
+    # during the event it is open again
+    door.event.ends_at = datetime.now(UTC) + timedelta(hours=1)
+    db.flush()
+    assert scan(client, door.staff, "", body(door.event.id, ticket.qr_payload)).status_code == 200
