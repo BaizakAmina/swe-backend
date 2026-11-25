@@ -24,6 +24,7 @@ from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundErr
 from app.models import CheckInRecord, Event, OrderItem, Ticket, TicketType, User
 from app.models.enums import CheckInAction, TicketStatus
 from app.schemas.tickets import (
+    CheckInByTicketRequest,
     CheckInRequest,
     CheckInResponse,
     CheckInResult,
@@ -115,6 +116,8 @@ def _record(
     ticket: Ticket,
     action: CheckInAction,
     device_info: str | None,
+    *,
+    manual: bool = False,
 ) -> None:
     db.add(
         CheckInRecord(
@@ -122,10 +125,18 @@ def _record(
             event_id=ticket.event_id,
             event_admin_user_id=user.id,
             action=action,
+            # the moment of the scan itself (not the transaction start): the feed orders by it
+            scanned_at=datetime.now(UTC),
             device_info=(device_info or None) and device_info[:200],
         )
     )
     checked_in = action == CheckInAction.CHECK_IN
+    what = "Check-in reversed"
+    if checked_in:
+        what = "Checked in manually (attendee search)" if manual else "Checked in"
+    meta: dict[str, object] = {"method": "manual" if manual else "qr"} if checked_in else {}
+    if device_info:
+        meta["device_info"] = device_info
     audit.log(
         db,
         actor_id=user.id,
@@ -133,10 +144,40 @@ def _record(
         entity_type="ticket",
         entity_id=ticket.id,
         event_id=ticket.event_id,
-        description=f"{'Checked in' if checked_in else 'Check-in reversed'}: "
-        f"{ticket.attendee.full_name} ({ticket.ticket_code})",
-        metadata={"device_info": device_info} if device_info else None,
+        description=f"{what}: {ticket.attendee.full_name} ({ticket.ticket_code})",
+        metadata=meta or None,
     )
+
+
+def _admit(
+    db: Session,
+    user: User,
+    result: CheckInResult,
+    ticket: Ticket | None,
+    device_info: str | None,
+    *,
+    manual: bool,
+) -> CheckInResponse:
+    """``valid`` + a locked ticket → checked in; anything else → the matching error."""
+    if result != "valid" or ticket is None:
+        unreadable = result in ("invalid_qr", "campaign_qr_not_admission")
+        response = _response(db, result, ticket)
+        raise AppError(
+            result,
+            response.message,
+            http.HTTP_422_UNPROCESSABLE_ENTITY if unreadable else http.HTTP_409_CONFLICT,
+            response.model_dump(mode="json", exclude={"message"}),
+        )
+    ticket.status = TicketStatus.CHECKED_IN
+    ticket.checked_in_at = datetime.now(UTC)
+    _record(db, user, ticket, CheckInAction.CHECK_IN, device_info, manual=manual)
+    db.commit()
+    return CheckInResponse(result="valid", message="Checked in", ticket=_info(db, ticket))
+
+
+def _ensure_open(event: Event) -> None:
+    if not events.check_in_open(event):
+        raise ConflictError("check_in_closed", "Check-in is closed for this event")
 
 
 def check_in(db: Session, user: User, data: CheckInRequest) -> CheckInResponse:
@@ -149,24 +190,30 @@ def check_in(db: Session, user: User, data: CheckInRequest) -> CheckInResponse:
     the same ``result`` / ``ticket`` as ``validate``.
     """
     event = _staffed_event(db, user, data.event_id)
-    if not events.check_in_open(event):
-        raise ConflictError("check_in_closed", "Check-in is closed for this event")
+    _ensure_open(event)
     result, ticket = _resolve(db, event, data.qr_payload, lock=True)
-    if result != "valid" or ticket is None:
-        unreadable = result in ("invalid_qr", "campaign_qr_not_admission")
-        response = _response(db, result, ticket)
-        raise AppError(
-            result,
-            response.message,
-            http.HTTP_422_UNPROCESSABLE_ENTITY if unreadable else http.HTTP_409_CONFLICT,
-            response.model_dump(mode="json", exclude={"message"}),
-        )
+    return _admit(db, user, result, ticket, data.device_info, manual=False)
 
-    ticket.status = TicketStatus.CHECKED_IN
-    ticket.checked_in_at = datetime.now(UTC)
-    _record(db, user, ticket, CheckInAction.CHECK_IN, data.device_info)
-    db.commit()
-    return CheckInResponse(result="valid", message="Checked in", ticket=_info(db, ticket))
+
+def check_in_by_ticket(db: Session, user: User, data: CheckInByTicketRequest) -> CheckInResponse:
+    """Manual check-in from the attendee search when the QR can't be read (BE-34).
+
+    Same rules, lock and responses as :func:`check_in`; the ticket is picked by id instead of a
+    signed QR. A ticket of another event → 409 ``wrong_event`` without its attendee data.
+    """
+    event = _staffed_event(db, user, data.event_id)
+    _ensure_open(event)
+    ticket = db.scalar(
+        select(Ticket)
+        .where(Ticket.id == data.ticket_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if ticket is None:
+        raise NotFoundError("ticket")
+    if ticket.event_id != event.id:
+        return _admit(db, user, "wrong_event", None, data.device_info, manual=True)
+    return _admit(db, user, _BY_STATUS[ticket.status], ticket, data.device_info, manual=True)
 
 
 def reverse(

@@ -36,7 +36,7 @@ from app.models.enums import (
     VerificationStatus,
 )
 from app.schemas.orders import AttendeeIn, OrderCreate, OrderLineIn
-from app.schemas.tickets import CheckInRequest
+from app.schemas.tickets import CheckInByTicketRequest, CheckInRequest
 from app.services import checkin, refunds, seating
 from app.services import orders as orders_svc
 from app.services.payments import activation, checkout
@@ -232,6 +232,34 @@ def test_ticket_is_admitted_once(world: Committed, parallel_engine: Engine) -> N
         len(scanners),
         as_user([s.id for s in scanners], lambda db, u: checkin.check_in(db, u, request).result),
     )
+
+    assert outcome.counts == {"valid": 1, "already_checked_in": len(scanners) - 1}
+    records = select(CheckInRecord.id).where(CheckInRecord.ticket_id == ticket.id)
+    assert count(parallel_engine, records) == 1
+
+
+def test_manual_and_qr_check_in_admit_once(world: Committed, parallel_engine: Engine) -> None:
+    """Half the scanners use the QR, half pick the ticket in the attendee search (BE-34)."""
+    ev = world.event()
+    tt = make_ticket_type(world.db, ev)
+    make_paid_order(world.db, world.user(), tt, [("Guest", "guest@example.com")])
+    scanners = [world.user() for _ in range(8)]
+    for s in scanners:
+        world.db.add(StaffAssignment(event_id=ev.id, user_id=s.id))
+    ticket = world.db.scalar(select(Ticket).where(Ticket.event_id == ev.id))
+    assert ticket is not None
+    world.commit()
+    by_qr = CheckInRequest(event_id=ev.id, qr_payload=ticket.qr_payload)
+    by_id = CheckInByTicketRequest(event_id=ev.id, ticket_id=ticket.id)
+
+    def scan(db: Session, i: int) -> str:
+        user = db.get(User, scanners[i].id)
+        assert user is not None
+        if i % 2:
+            return checkin.check_in_by_ticket(db, user, by_id).result
+        return checkin.check_in(db, user, by_qr).result
+
+    outcome = run_parallel(parallel_engine, len(scanners), scan)
 
     assert outcome.counts == {"valid": 1, "already_checked_in": len(scanners) - 1}
     records = select(CheckInRecord.id).where(CheckInRecord.ticket_id == ticket.id)
