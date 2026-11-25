@@ -22,30 +22,6 @@ pytestmark = pytest.mark.db
 API = "/api/v1"
 
 
-def issue_test_tickets(db: Session, order: Order) -> None:
-    """Stand-in for BE-17's issuer: one ticket per item, and only with a succeeded payment."""
-    if order.total_minor > 0:
-        paid = db.scalar(
-            select(Payment).where(
-                Payment.order_id == order.id, Payment.status == PaymentStatus.SUCCEEDED
-            )
-        )
-        assert paid is not None, "ticket issued without a succeeded payment"
-    for item in order.items:
-        code = uuid.uuid4().hex[:12].upper()
-        item.ticket = Ticket(
-            event_id=order.event_id,
-            attendee_id=item.attendee.id,
-            ticket_code=code,
-            qr_payload=f"T1.{code}.sig",
-        )
-
-
-@pytest.fixture(autouse=True)
-def ticket_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(orders_svc, "on_order_paid_hooks", [issue_test_tickets])
-
-
 @pytest.fixture
 def shop(db: Session) -> SimpleNamespace:
     org = make_organizer(db)
@@ -112,8 +88,8 @@ def test_success_pays_order_and_issues_tickets(
     assert (shop.paid.quantity_reserved, shop.paid.quantity_sold) == (0, 2)
 
     assert actions(db, payment["id"]) == ["payment.succeeded"]
-    assert actions(db, order["id"]) == ["order.created", "order.paid"]
-    assert [m["kind"] for m in outbox] == ["order_confirmation"]
+    assert actions(db, order["id"]) == ["order.created", "order.paid", "ticket.issued"]
+    assert [m["kind"] for m in outbox] == ["order_confirmation", "ticket", "ticket"]
 
 
 def test_fail_issues_nothing_and_can_be_retried(client: TestClient, shop, db: Session) -> None:

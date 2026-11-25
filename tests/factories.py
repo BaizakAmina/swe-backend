@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Event, OrganizerProfile, TicketType, User, UserRole
 from app.models.enums import EventStatus, Role, TicketKind
+from app.services.qr_sign import sign_ticket_payload
 
 
 def make_user(db: Session, *, roles: tuple[Role, ...] = (Role.ATTENDEE,), **kw: Any) -> User:
@@ -122,7 +123,7 @@ def make_paid_order(
                 event_id=ticket_type.event_id,
                 attendee_id=attendee.id,
                 ticket_code=code,
-                qr_payload=f"T1.{code}.sig",
+                qr_payload=sign_ticket_payload(code, ticket_type.event_id),
                 status=TicketStatus.VALID,
             )
         )

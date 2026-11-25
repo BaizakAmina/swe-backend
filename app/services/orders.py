@@ -30,22 +30,21 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
-from app.models import Attendee, Event, Order, OrderItem, Payment, TicketType, User
+from app.models import Attendee, Event, Order, OrderItem, TicketType, User
 from app.models.enums import (
     EventStatus,
     OrderStatus,
-    PaymentPurpose,
-    PaymentStatus,
     SeatingMode,
 )
 from app.schemas.orders import OrderCreate
-from app.services import audit, notifications, permissions
+from app.services import audit, notifications, permissions, ticketing
 from app.services.audit import AuditAction
+from app.services.payments.records import has_succeeded_ticket_payment
 from app.services.ticket_types import is_on_sale, is_sellable
 
 # Called inside the transaction that marks an order paid, after the counters moved
-# reserved → sold. Ticket issuance (BE-17) registers itself here.
-on_order_paid_hooks: list[Callable[[Session, Order], None]] = []
+# reserved → sold: ticket issuance (``ticketing.issue_tickets``).
+on_order_paid_hooks: list[Callable[[Session, Order], object]] = [ticketing.issue_tickets]
 
 
 def _now() -> datetime:
@@ -283,22 +282,17 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
     db.commit()
 
     if order.status == OrderStatus.PAID:
-        notifications.send_order_confirmation(db, order)
+        notify_paid(db, order)
     return order
 
 
 # ------------------------------------------------------------------ helpers for other modules
 
 
-def _has_succeeded_payment(db: Session, order: Order) -> bool:
-    db.flush()
-    stmt = select(Payment.id).where(
-        Payment.order_id == order.id,
-        Payment.purpose == PaymentPurpose.TICKET_PURCHASE,
-        Payment.status == PaymentStatus.SUCCEEDED,
-        Payment.amount_minor == order.total_minor,
-    )
-    return db.scalar(stmt.limit(1)) is not None
+def notify_paid(db: Session, order: Order) -> None:
+    """After the commit that paid ``order``: order confirmation + tickets (email, PDF)."""
+    notifications.send_order_confirmation(db, order)
+    ticketing.deliver(db, order)
 
 
 def mark_paid(db: Session, order: Order, *, actor_id: uuid.UUID | None = None) -> Order:
@@ -313,7 +307,7 @@ def mark_paid(db: Session, order: Order, *, actor_id: uuid.UUID | None = None) -
         raise ConflictError("order_not_pending", f"Order is {order.status}, not pending")
     if _is_stale(order):
         raise ConflictError("reservation_expired", "The reservation for this order has expired")
-    if order.total_minor > 0 and not _has_succeeded_payment(db, order):
+    if order.total_minor > 0 and not has_succeeded_ticket_payment(db, order):
         raise ConflictError("payment_required", "The order has no succeeded payment")
 
     quantities = _quantities(order)
@@ -486,5 +480,5 @@ def register_free(db: Session, user: User, order_id: uuid.UUID) -> Order:
         raise ConflictError("reservation_expired", "The reservation for this order has expired")
     mark_paid(db, order, actor_id=user.id)
     db.commit()
-    notifications.send_order_confirmation(db, order)
+    notify_paid(db, order)
     return order
