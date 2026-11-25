@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import Connection, event, select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, CheckInRecord, StaffAssignment, Ticket, User
@@ -328,3 +328,71 @@ def test_manual_check_in_access_and_scope(client: TestClient, door, db: Session)
     db.flush()
     resp = manual(client, door.staff, door.event.id, ticket.id)
     assert resp.status_code == 409 and code(resp) == "check_in_closed"
+
+
+# ------------------------------------------------------------------ feed (BE-35)
+
+
+def feed(client: TestClient, user: User, event_id: Any, **params: Any) -> Any:
+    return client.get(
+        f"{API}/events/{event_id}/check-ins", params=params, headers=auth_headers(user)
+    )
+
+
+def test_feed_newest_first_with_reverse(client: TestClient, door, db: Session) -> None:
+    aru, bek = door.t["Aru"], door.t["Bek"]
+    scan(client, door.staff, "", body(door.event.id, aru.qr_payload))
+    manual(client, door.owner, door.event.id, bek.id)
+    client.post(f"{API}/checkin/{aru.id}/reverse", headers=auth_headers(door.staff))
+
+    resp = feed(client, door.staff, door.event.id)
+    assert resp.status_code == 200, resp.text
+    items = resp.json()
+    assert [(i["attendee_name"], i["action"], i["actor_name"]) for i in items] == [
+        ("Aru", "reverse", "Door staff"),
+        ("Bek", "check_in", door.owner.full_name),
+        ("Aru", "check_in", "Door staff"),
+    ]
+    assert items[0]["ticket_id"] == str(aru.id)
+    times = [datetime.fromisoformat(i["at"]) for i in items]
+    assert times == sorted(times, reverse=True)
+
+
+def test_feed_access_and_limit(client: TestClient, door, db: Session) -> None:
+    other_event = make_event(db, make_organizer(db))
+    staff_elsewhere = make_user(db)
+    db.add(StaffAssignment(event_id=other_event.id, user_id=staff_elsewhere.id))
+    db.flush()
+    assert feed(client, staff_elsewhere, door.event.id).status_code == 403
+    assert feed(client, make_user(db), door.event.id).status_code == 403
+    assert feed(client, door.staff, door.event.id).json() == []
+
+    for name in ("Aru", "Bek", "Vika"):
+        manual(client, door.staff, door.event.id, door.t[name].id)
+    assert len(feed(client, door.staff, door.event.id, limit=2).json()) == 2
+    assert len(feed(client, door.staff, door.event.id, limit=1000).json()) == 3  # capped at 200
+    assert len(feed(client, door.staff, door.event.id, limit=0).json()) == 1
+
+
+def test_feed_has_no_n_plus_one(
+    client: TestClient, door, db: Session, connection: Connection
+) -> None:
+    def queries_for_feed() -> int:
+        statements: list[str] = []
+
+        def capture(_c: Any, _cur: Any, statement: str, *_: Any) -> None:
+            statements.append(statement)
+
+        event.listen(connection, "before_cursor_execute", capture)
+        try:
+            assert feed(client, door.staff, door.event.id).status_code == 200
+        finally:
+            event.remove(connection, "before_cursor_execute", capture)
+        return len(statements)
+
+    manual(client, door.staff, door.event.id, door.t["Aru"].id)
+    one = queries_for_feed()
+    manual(client, door.staff, door.event.id, door.t["Bek"].id)
+    manual(client, door.staff, door.event.id, door.t["Vika"].id)
+    client.post(f"{API}/checkin/{door.t['Vika'].id}/reverse", headers=auth_headers(door.staff))
+    assert queries_for_feed() == one  # 4 rows cost the same as 1
