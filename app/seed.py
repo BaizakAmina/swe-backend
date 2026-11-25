@@ -22,10 +22,14 @@ from app.models import (
     PayoutAccount,
     PromoCode,
     PromotionalCampaign,
+    Seat,
     StaffAssignment,
     TicketType,
     User,
     UserRole,
+    Venue,
+    VenueRow,
+    VenueSection,
 )
 from app.models.enums import (
     DiscountType,
@@ -111,6 +115,44 @@ def _event(db: Session, organizer: OrganizerProfile, title: str, **kw: object) -
     db.add(event)
     db.flush()
     return event
+
+
+DEMO_VENUE = "BiletFlow Hall"
+# section → (rows, seats per row, price category); row A seats 1–2 are wheelchair places
+DEMO_LAYOUT: list[tuple[str, list[str], int, str]] = [
+    ("Parter", ["A", "B", "C", "D", "E", "F"], 12, "standard"),
+    ("Balcony", ["G", "H"], 10, "economy"),
+]
+
+
+def _venue(db: Session) -> int:
+    """One predefined seat layout (assigned seating, BE-30). Returns seats created."""
+    if db.scalar(select(Venue.id).where(Venue.name == DEMO_VENUE)) is not None:
+        return 0
+    venue = Venue(name=DEMO_VENUE, address="Abay Ave 1, Almaty", city="Almaty")
+    db.add(venue)
+    db.flush()
+    seats = 0
+    for s_order, (name, labels, per_row, category) in enumerate(DEMO_LAYOUT):
+        section = VenueSection(venue_id=venue.id, name=name, sort_order=s_order)
+        db.add(section)
+        db.flush()
+        for r_order, label in enumerate(labels):
+            row = VenueRow(section_id=section.id, label=label, sort_order=r_order)
+            db.add(row)
+            db.flush()
+            for number in range(1, per_row + 1):
+                db.add(
+                    Seat(
+                        row_id=row.id,
+                        seat_number=str(number),
+                        price_category=category,
+                        is_accessible=label == "A" and number <= 2,
+                    )
+                )
+                seats += 1
+    db.flush()
+    return seats
 
 
 def seed(db: Session) -> dict[str, int]:
@@ -202,8 +244,9 @@ def seed(db: Session) -> dict[str, int]:
             )
         )
 
+    seats = _venue(db)
     db.commit()
-    return {"users": len(users), "events_created": created}
+    return {"users": len(users), "events_created": created, "seats_created": seats}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -217,7 +260,10 @@ def main(argv: list[str] | None = None) -> int:
             print("Database wiped.")
         result = seed(db)
 
-    print(f"Seed done: {result['users']} demo users, {result['events_created']} new events.")
+    print(
+        f"Seed done: {result['users']} demo users, {result['events_created']} new events, "
+        f"{result['seats_created']} new seats in “{DEMO_VENUE}”."
+    )
     print(f"Password for all demo accounts: {DEMO_PASSWORD}")
     for email, _, roles in DEMO_USERS:
         print(f"  {email:<28} {', '.join(r.value for r in roles)}")

@@ -15,13 +15,15 @@ from fastapi import FastAPI
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.services.orders import expire_stale_orders
+from app.services.seating import expire_stale_holds
 
 logger = logging.getLogger("biletflow.order_sweeper")
 
 
 def sweep_once() -> int:
+    """Expired order reservations, then expired free seat holds. Returns how many were freed."""
     with SessionLocal() as db:
-        return expire_stale_orders(db)
+        return expire_stale_orders(db) + expire_stale_holds(db)
 
 
 async def run_forever(interval_seconds: float) -> None:
@@ -33,7 +35,7 @@ async def run_forever(interval_seconds: float) -> None:
             logger.exception("order sweep failed")
             continue
         if expired:
-            logger.info("expired %d stale order reservation(s)", expired)
+            logger.info("released %d stale reservation(s) / seat hold(s)", expired)
 
 
 @contextlib.asynccontextmanager

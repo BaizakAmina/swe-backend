@@ -30,14 +30,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
-from app.models import Attendee, Event, Order, OrderItem, TicketType, User
+from app.models import Attendee, Event, Order, OrderItem, SeatHold, TicketType, User
 from app.models.enums import (
     EventStatus,
     OrderStatus,
     SeatingMode,
 )
 from app.schemas.orders import OrderCreate
-from app.services import audit, notifications, permissions, promo, ticketing
+from app.services import audit, notifications, permissions, promo, seating, ticketing
 from app.services.audit import AuditAction
 from app.services.payments.records import has_succeeded_ticket_payment
 from app.services.ticket_types import is_on_sale, is_sellable
@@ -230,6 +230,16 @@ def _build_order(
     )
 
 
+def _seat_items(db: Session, order: Order, holds: list[SeatHold]) -> None:
+    """Holds → order: seat id + a section / row / seat snapshot on each item, in request order."""
+    seating.attach_to_order(db, order, holds)
+    labels = seating.seat_labels(db, [h.seat_id for h in holds])
+    for item, held in zip(order.items, holds, strict=True):
+        item.seat_id = held.seat_id
+        item.section, item.row_label, item.seat_number = labels[held.seat_id]
+    db.flush()
+
+
 def create_order(db: Session, user: User, data: OrderCreate) -> Order:
     """Reserve inventory atomically and create a pending order (one transaction, one commit).
 
@@ -246,11 +256,15 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
     if event is None:
         raise NotFoundError("event")
     _ensure_event_on_sale(event, now)
-    if event.seating_mode == SeatingMode.ASSIGNED or data.seat_hold_ids:
-        raise _unprocessable(
-            "seated_checkout_unavailable", "Checkout with assigned seats is not available yet"
-        )
     quantities = _requested_quantities(data)
+    assigned = event.seating_mode == SeatingMode.ASSIGNED
+    if assigned and len(data.seat_hold_ids or []) != sum(quantities.values()):
+        raise _unprocessable(
+            "seat_holds_mismatch",
+            "Assigned seating: send one seat hold per ticket (seat_hold_ids)",
+        )
+    if not assigned and data.seat_hold_ids:
+        raise _unprocessable("seat_holds_not_allowed", "This event has no assigned seats")
 
     types = _lock_ticket_types(db, quantities)
     currency = _check_lines(event, quantities, types, now)
@@ -258,6 +272,11 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
     if data.promo_code:  # campaign row locked after the ticket types (see promo)
         lines = [promo.Line(t, types[t].price_minor, q) for t, q in quantities.items()]
         quote = promo.quote(db, event.id, data.promo_code, lines, lock=True, now=now)
+    holds = (  # seat holds last in the lock order; checked before anything is written
+        seating.lock_for_checkout(db, user, event.id, data.seat_hold_ids or [], now)
+        if assigned
+        else []
+    )
     order = _build_order(
         user, event, data, types, currency, now, quote.discount_minor if quote else 0
     )
@@ -270,6 +289,8 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
             promo.redeem(db, order, quote, user.id)
             order.promo_code_id = quote.promo_code.id
             db.flush()
+        if holds:
+            _seat_items(db, order, holds)
     except IntegrityError as exc:  # CHECK constraints — should be unreachable under the locks
         if "redemptions_within_limit" in str(exc.orig):
             raise promo.promo_error("promo_exhausted") from exc
@@ -378,6 +399,7 @@ def _release_many(
             released={str(k): v for k, v in quantities.items()},
         )
     promo.release(db, orders)  # campaign rows after the ticket types
+    seating.release_for_orders(db, orders)
     db.flush()
 
 
@@ -392,6 +414,7 @@ def return_sold(db: Session, paid_orders: Sequence[Order]) -> None:
     for tt_id, qty in total.items():
         types[tt_id].quantity_sold -= qty
     promo.release(db, paid_orders)
+    seating.release_for_orders(db, paid_orders)
     db.flush()
 
 

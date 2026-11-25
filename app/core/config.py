@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     reservation_ttl_minutes: int = 10
     # Background sweep of expired reservations (seconds between runs; 0 disables it).
     order_sweep_interval_seconds: float = 30.0
+    # Assigned seating: how long a seat stays held before checkout, and how many at once.
+    seat_hold_ttl_minutes: int = 10
+    max_seat_holds_per_user: int = 10
 
     # Email (MailHog in dev)
     smtp_host: str = "localhost"

@@ -25,15 +25,25 @@ from app.models import (
     PromoRedemption,
     PromotionalCampaign,
     Refund,
+    Seat,
+    SeatHold,
     StaffAssignment,
     Ticket,
     TicketType,
     User,
     UserRole,
+    Venue,
+    VenueRow,
+    VenueSection,
 )
 
 
-def cleanup(eng: Engine, event_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None:
+def cleanup(
+    eng: Engine,
+    event_id: uuid.UUID,
+    user_ids: list[uuid.UUID],
+    venue_id: uuid.UUID | None = None,
+) -> None:
     """Delete everything a concurrency test committed for ``event_id`` and ``user_ids``.
 
     ``audit_log`` is append-only (trigger) and references users, so the delete runs with
@@ -48,6 +58,7 @@ def cleanup(eng: Engine, event_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None
         conn.execute(delete(AuditLog).where(AuditLog.event_id == event_id))
         conn.execute(delete(AuditLog).where(AuditLog.actor_user_id.in_(user_ids)))
         conn.execute(delete(Notification).where(Notification.user_id.in_(user_ids)))
+        conn.execute(delete(SeatHold).where(SeatHold.event_id == event_id))
         conn.execute(delete(CheckInRecord).where(CheckInRecord.event_id == event_id))
         conn.execute(delete(Ticket).where(Ticket.event_id == event_id))
         payment_ids = select(Payment.id).where(
@@ -77,3 +88,10 @@ def cleanup(eng: Engine, event_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None
         conn.execute(delete(OrganizerProfile).where(OrganizerProfile.user_id.in_(user_ids)))
         conn.execute(delete(UserRole).where(UserRole.user_id.in_(user_ids)))
         conn.execute(delete(User).where(User.id.in_(user_ids)))
+        if venue_id is not None:
+            section_ids = select(VenueSection.id).where(VenueSection.venue_id == venue_id)
+            row_ids = select(VenueRow.id).where(VenueRow.section_id.in_(section_ids))
+            conn.execute(delete(Seat).where(Seat.row_id.in_(row_ids)))
+            conn.execute(delete(VenueRow).where(VenueRow.section_id.in_(section_ids)))
+            conn.execute(delete(VenueSection).where(VenueSection.venue_id == venue_id))
+            conn.execute(delete(Venue).where(Venue.id == venue_id))
