@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Ticket, User
+from app.models import StaffAssignment, Ticket, User
 from app.models.enums import TicketStatus
 from tests.factories import (
     auth_headers,
@@ -134,3 +134,24 @@ def test_attendees_and_orders_only_for_organizer(client: TestClient, world, db: 
     assert client.get(f"{API}/events/{eid}/orders", headers=other).status_code == 403
     orders = client.get(f"{API}/events/{eid}/orders", headers=auth_headers(world["owner"])).json()
     assert orders["total"] == 1
+
+
+def test_attendee_search_open_to_assigned_event_admin(
+    client: TestClient, world, db: Session
+) -> None:
+    eid = world["event"].id
+    url = f"{API}/events/{eid}/attendees"
+    door = make_user(db, email="door@example.com")
+    assert client.get(url, headers=auth_headers(door)).status_code == 403
+
+    db.add(StaffAssignment(event_id=eid, user_id=door.id))
+    db.flush()
+    h = auth_headers(door)
+    page = client.get(url, params={"q": "aru"}, headers=h).json()
+    assert page["total"] == 1
+    row = page["items"][0]
+    assert row["ticket_code"] and {"section", "row_label", "seat_number"} <= row.keys()
+
+    # door staff search, but do not export or see orders
+    assert client.get(f"{url}.csv", headers=h).status_code == 403
+    assert client.get(f"{API}/events/{eid}/orders", headers=h).status_code == 403

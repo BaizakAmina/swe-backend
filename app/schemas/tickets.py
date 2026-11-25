@@ -40,11 +40,15 @@ class TicketRead(ORMModel):
 
 class AttendeeRow(BaseModel):
     ticket_id: uuid.UUID
+    ticket_code: str
     attendee_name: str
     attendee_email: str
     ticket_type_name: str
     ticket_status: TicketStatus
     order_id: uuid.UUID
+    section: str | None
+    row_label: str | None
+    seat_number: str | None
     checked_in_at: datetime | None
 
 

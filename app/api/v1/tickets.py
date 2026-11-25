@@ -65,7 +65,7 @@ def ticket_qr(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Respons
 
 @router.get("/events/{event_id}/attendees", response_model=Page[AttendeeRow])
 def event_attendees(
-    event: ManagedEvent,
+    event: StaffedEvent,
     db: DbSession,
     q: str | None = None,
     ticket_type_id: uuid.UUID | None = None,
@@ -73,7 +73,11 @@ def event_attendees(
     limit: int = 50,
     offset: int = 0,
 ) -> Page[AttendeeRow]:
-    """Search by name, email or ticket code; filter by ticket type and status."""
+    """Search by name, email or ticket code; filter by ticket type and status.
+
+    Open to the event's assigned event admins too (door staff look people up when a QR
+    does not scan). The CSV export stays organizer-only.
+    """
     page = Pagination(limit=max(1, min(limit, 200)), offset=max(offset, 0))
     return views.attendees(db, event, page, q, ticket_type_id, ticket_status)
 
