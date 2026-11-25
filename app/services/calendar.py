@@ -14,6 +14,7 @@ from icalendar import Calendar
 from icalendar import Event as ICalEvent
 
 from app.core.config import get_settings
+from app.core.urls import public_api_url
 from app.models import Event
 from app.models.enums import EventStatus
 from app.schemas.events import CalendarLinks
@@ -60,7 +61,6 @@ def build_ics(event: Event) -> bytes:
 
 
 def links(event: Event) -> CalendarLinks:
-    api = get_settings().api_base_url.rstrip("/")
     start_utc = event.starts_at.astimezone(UTC)
     end_utc = event.ends_at.astimezone(UTC)
     details = f"{(event.description or '').strip()}\n\n{_event_url(event)}".strip()
@@ -86,5 +86,5 @@ def links(event: Event) -> CalendarLinks:
         }
     )
     return CalendarLinks(
-        ics=f"{api}/api/v1/events/{event.id}/calendar.ics", google=google, outlook=outlook
+        ics=public_api_url(f"/events/{event.id}/calendar.ics"), google=google, outlook=outlook
     )

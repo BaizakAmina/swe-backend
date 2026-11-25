@@ -195,8 +195,18 @@ _TEXTS: dict[str, dict[Locale, Texts]] = {
 }
 
 
+# label of the deep link into the mobile app, shown under the main button
+APP_LINK_LABEL: dict[Locale, str] = {
+    Locale.RU: "Открыть в приложении BiletFlow",
+    Locale.EN: "Open in the BiletFlow app",
+    Locale.KK: "BiletFlow қосымшасында ашу",
+}
+
+
 def texts(kind: str, locale: Locale | str, context: dict[str, object]) -> Texts:
     by_locale = _TEXTS[kind]
     raw = by_locale.get(Locale(locale), by_locale[Locale.RU])
     safe = {k: str(v) for k, v in context.items()}
-    return {k: v.format(**safe) for k, v in raw.items()}
+    result = {k: v.format(**safe) for k, v in raw.items()}
+    result.setdefault("app_cta", APP_LINK_LABEL.get(Locale(locale), APP_LINK_LABEL[Locale.RU]))
+    return result

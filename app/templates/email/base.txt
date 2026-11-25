@@ -6,4 +6,7 @@ BiletFlow
 {% if link %}
 {{ t.cta }}: {{ link }}
 {% endif %}
+{% if app_link %}
+{{ t.app_cta }}: {{ app_link }}
+{% endif %}
 {% if t.note %}{{ t.note }}{% endif %}

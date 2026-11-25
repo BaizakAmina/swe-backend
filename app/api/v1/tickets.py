@@ -1,10 +1,11 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, StaffedEvent
 from app.models.enums import TicketStatus
-from app.schemas.common import Page, Pagination
+from app.schemas.common import Page, Pagination, wide_pagination
 from app.schemas.tickets import (
     AttendeeRow,
     CheckInByTicketRequest,
@@ -68,18 +69,16 @@ def ticket_qr(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Respons
 def event_attendees(
     event: StaffedEvent,
     db: DbSession,
+    page: Annotated[Pagination, Depends(wide_pagination)],
     q: str | None = None,
     ticket_type_id: uuid.UUID | None = None,
     ticket_status: TicketStatus | None = None,
-    limit: int = 50,
-    offset: int = 0,
 ) -> Page[AttendeeRow]:
     """Search by name, email or ticket code; filter by ticket type and status.
 
     Open to the event's assigned event admins too (door staff look people up when a QR
     does not scan). The CSV export stays organizer-only.
     """
-    page = Pagination(limit=max(1, min(limit, 200)), offset=max(offset, 0))
     return views.attendees(db, event, page, q, ticket_type_id, ticket_status)
 
 

@@ -116,6 +116,7 @@ uvicorn app.main:app --reload
 | `ACCESS_TOKEN_TTL_MINUTES` / `REFRESH_TOKEN_TTL_DAYS` | 15 / 14 | token lifetimes |
 | `RESERVATION_TTL_MINUTES` | 10 | checkout hold |
 | `PUBLIC_WEB_URL` | `http://localhost:3000` | links in emails / Campaign QR |
+| `APP_LINK_BASE` | `biletflow://app` | mobile deep links added to emails (`…/verify-email?token=…`); empty = off |
 | `API_BASE_URL` | `http://localhost:8000` | links to PDFs in emails |
 | `PAID_TERMS_VERSION` | `2026-11` | current paid-event terms; organizers re-accept after a change |
 | `PUBLIC_API_URL` | *(empty)* | API address in links returned to clients (cover images, calendar); empty → address of the request |

@@ -67,6 +67,20 @@ def _api(path: str) -> str:
     return f"{get_settings().api_base_url.rstrip('/')}{path}"
 
 
+def app_link(path: str) -> str | None:
+    """Deep link into the mobile app for a web path, e.g. ``biletflow://app/orders/…``."""
+    base = get_settings().app_link_base.strip().rstrip("/")
+    return f"{base}{path}" if base else None
+
+
+def _app_link_for(link: str | None) -> str | None:
+    """Web links get the same path in the app; other links (API files) have no app screen."""
+    web = get_settings().public_web_url.rstrip("/")
+    if link and link.startswith(web + "/"):
+        return app_link(link[len(web) :])
+    return None
+
+
 # ------------------------------------------------------------------ delivery
 
 
@@ -111,17 +125,22 @@ def notify(
     context: dict[str, Any],
     email: str | None = None,
     link: str | None = None,
+    app_link: str | None = None,
     in_app: bool = False,
     attachments: list[Attachment] | None = None,
 ) -> Notification | None:
-    """Render, send and record one notification. Commits its own rows; never raises."""
+    """Render, send and record one notification. Commits its own rows; never raises.
+
+    ``app_link`` (mobile deep link) defaults to the web ``link``'s path under
+    ``APP_LINK_BASE``."""
     to = email or (user.email if user else None)
     locale = user.locale if user else Locale.RU
     t = texts(kind, locale, context)
-    payload: dict[str, Any] = {"subject": t["subject"], "link": link}
+    app_link = app_link or _app_link_for(link)
+    payload: dict[str, Any] = {"subject": t["subject"], "link": link, "app_link": app_link}
     payload.update({k: str(v) for k, v in context.items() if k != "token"})  # no secrets in DB
-    if "token" in context and link:
-        payload["link"] = None
+    if "token" in context:
+        payload["link"] = payload["app_link"] = None
 
     record: Notification | None = None
     if user is not None:
@@ -137,7 +156,7 @@ def notify(
             )
 
     if to:
-        ctx = {"t": t, "link": link, "locale": str(locale)}
+        ctx = {"t": t, "link": link, "app_link": app_link, "locale": str(locale)}
         text_body = _env.get_template("base.txt").render(**ctx)
         html_body = _env.get_template("base.html").render(**ctx)
         try:
@@ -148,6 +167,8 @@ def notify(
                         "to": to,
                         "subject": t["subject"],
                         "text": text_body,
+                        "html": html_body,
+                        "app_link": app_link,
                         "attachments": [a[0] for a in attachments or []],
                         **context,
                     }
@@ -232,6 +253,7 @@ def send_ticket(db: Session, ticket: Ticket) -> None:
             "ticket_id": ticket.id,
         },
         link=_api(f"/api/v1/tickets/{ticket.id}/pdf"),
+        app_link=app_link(f"/tickets/{ticket.id}"),
         attachments=[("event.ics", calendar.build_ics(event), "text/calendar")],
     )
 

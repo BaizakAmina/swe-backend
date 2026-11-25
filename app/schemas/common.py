@@ -29,16 +29,31 @@ class Page(BaseModel, Generic[T]):
     offset: int
 
 
+MAX_PAGE = 100
+# long lists a client keeps in full (door list, activity log): bigger pages allowed
+MAX_WIDE_PAGE = 200
+
+
 class Pagination(BaseModel):
-    limit: int = Field(default=20, ge=1, le=100)
+    limit: int = Field(default=20, ge=1, le=MAX_WIDE_PAGE)
     offset: int = Field(default=0, ge=0)
 
 
 def pagination(
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Pagination:
     return Pagination(limit=limit, offset=offset)
+
+
+def wide_pagination(
+    limit: Annotated[
+        int, Query(ge=1, description=f"Up to {MAX_WIDE_PAGE}; larger values are reduced to it")
+    ] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Pagination:
+    """For lists clients fetch in full; ``Page.limit`` shows the limit actually applied."""
+    return Pagination(limit=min(limit, MAX_WIDE_PAGE), offset=offset)
 
 
 class Money(BaseModel):

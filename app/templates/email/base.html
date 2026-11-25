@@ -15,6 +15,11 @@
              padding:12px 20px;border-radius:8px;font-weight:bold;">{{ t.cta }}</a>
         </td></tr>
         {% endif %}
+        {% if app_link %}
+        <tr><td style="font-size:14px;padding-bottom:24px;">
+          <a href="{{ app_link }}" style="color:#4f46e5;">{{ t.app_cta }}</a>
+        </td></tr>
+        {% endif %}
         {% if t.note %}<tr><td style="font-size:13px;color:#71717a;">{{ t.note }}</td></tr>{% endif %}
       </table>
     </td></tr>
