@@ -8,6 +8,7 @@ from app.schemas.common import Page, Pagination
 from app.schemas.tickets import (
     AttendeeRow,
     CheckInByTicketRequest,
+    CheckInFeedItem,
     CheckInRequest,
     CheckInResponse,
     CheckInStats,
@@ -135,6 +136,15 @@ def check_in_by_ticket(
 def reverse_check_in(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> CheckInResponse:
     """Undo a mistaken check-in (``checked_in → valid``). 409 ``not_checked_in`` otherwise."""
     return checkin.reverse(db, user, ticket_id)
+
+
+@checkin_router.get("/events/{event_id}/check-ins", response_model=list[CheckInFeedItem])
+def checkin_feed(event: StaffedEvent, db: DbSession, limit: int = 50) -> list[CheckInFeedItem]:
+    """Latest scans for the scanner screen, newest first: ``check_in`` and ``reverse``.
+
+    ``limit`` 1–200 (default 50). Assigned event admin, organizer or platform admin.
+    """
+    return checkin.feed(db, event, limit)
 
 
 @checkin_router.get("/events/{event_id}/checkin-stats", response_model=CheckInStats)

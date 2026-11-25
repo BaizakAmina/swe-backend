@@ -21,10 +21,11 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
-from app.models import CheckInRecord, Event, OrderItem, Ticket, TicketType, User
+from app.models import Attendee, CheckInRecord, Event, OrderItem, Ticket, TicketType, User
 from app.models.enums import CheckInAction, TicketStatus
 from app.schemas.tickets import (
     CheckInByTicketRequest,
+    CheckInFeedItem,
     CheckInRequest,
     CheckInResponse,
     CheckInResult,
@@ -239,6 +240,35 @@ def reverse(
     _record(db, user, ticket, CheckInAction.REVERSE, device_info)
     db.commit()
     return CheckInResponse(result="valid", message="Check-in reversed", ticket=_info(db, ticket))
+
+
+FEED_MAX = 200
+
+
+def feed(db: Session, event: Event, limit: int = 50) -> list[CheckInFeedItem]:
+    """Latest check-ins and undos of the event, newest first (BE-35). One query, no N+1."""
+    limit = max(1, min(limit, FEED_MAX))
+    rows = db.execute(
+        select(
+            CheckInRecord.ticket_id,
+            Attendee.full_name,
+            User.full_name,
+            CheckInRecord.scanned_at,
+            CheckInRecord.action,
+        )
+        .join(Ticket, Ticket.id == CheckInRecord.ticket_id)
+        .join(Attendee, Attendee.id == Ticket.attendee_id)
+        .join(User, User.id == CheckInRecord.event_admin_user_id)
+        .where(CheckInRecord.event_id == event.id)
+        .order_by(CheckInRecord.scanned_at.desc(), CheckInRecord.created_at.desc())
+        .limit(limit)
+    ).tuples()
+    return [
+        CheckInFeedItem(
+            ticket_id=ticket_id, attendee_name=attendee, actor_name=actor, at=at, action=action
+        )
+        for ticket_id, attendee, actor, at, action in rows
+    ]
 
 
 def stats(db: Session, event: Event) -> CheckInStats:

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.models.enums import TicketStatus
+from app.models.enums import CheckInAction, TicketStatus
 from app.schemas.common import ORMModel
 
 
@@ -94,6 +94,16 @@ class CheckInResponse(BaseModel):
     result: CheckInResult
     message: str
     ticket: CheckInTicketInfo | None = None
+
+
+class CheckInFeedItem(BaseModel):
+    """One scan in the event's feed: an admission or an undo."""
+
+    ticket_id: uuid.UUID
+    attendee_name: str
+    actor_name: str
+    at: datetime
+    action: CheckInAction
 
 
 class CheckInStatsByType(BaseModel):
