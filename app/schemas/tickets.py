@@ -61,6 +61,14 @@ class CheckInRequest(BaseModel):
     device_info: str | None = None
 
 
+class CheckInByTicketRequest(BaseModel):
+    """Manual check-in: the ticket picked in the attendee search (QR can't be read)."""
+
+    event_id: uuid.UUID
+    ticket_id: uuid.UUID
+    device_info: str | None = None
+
+
 CheckInResult = Literal[
     "valid",
     "already_checked_in",

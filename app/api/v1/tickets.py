@@ -7,6 +7,7 @@ from app.models.enums import TicketStatus
 from app.schemas.common import Page, Pagination
 from app.schemas.tickets import (
     AttendeeRow,
+    CheckInByTicketRequest,
     CheckInRequest,
     CheckInResponse,
     CheckInStats,
@@ -114,6 +115,16 @@ def check_in(data: CheckInRequest, user: CurrentUser, db: DbSession) -> CheckInR
     ``refunded``, ``wrong_event``; 422 ``invalid_qr``, ``campaign_qr_not_admission``.
     """
     return checkin.check_in(db, user, data)
+
+
+@checkin_router.post("/checkin/by-ticket", response_model=CheckInResponse)
+def check_in_by_ticket(
+    data: CheckInByTicketRequest, user: CurrentUser, db: DbSession
+) -> CheckInResponse:
+    """Manual check-in by ``ticket_id`` (from ``GET /events/{id}/attendees``) when the QR can't
+    be read. Same response and errors as ``POST /checkin``; recorded as manual in the audit log.
+    """
+    return checkin.check_in_by_ticket(db, user, data)
 
 
 @checkin_router.post(

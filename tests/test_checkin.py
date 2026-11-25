@@ -1,5 +1,6 @@
 """BE-18: check-in API — validate, check-in, reverse, stats."""
 
+import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -244,3 +245,86 @@ def test_check_in_follows_the_scanner_window(client: TestClient, door, db: Sessi
     door.event.ends_at = datetime.now(UTC) + timedelta(hours=1)
     db.flush()
     assert scan(client, door.staff, "", body(door.event.id, ticket.qr_payload)).status_code == 200
+
+
+# ------------------------------------------------------------------ manual check-in (BE-34)
+
+
+def manual(client: TestClient, user: User, event_id: Any, ticket_id: Any, **extra: Any) -> Any:
+    return client.post(
+        f"{API}/checkin/by-ticket",
+        json={"event_id": str(event_id), "ticket_id": str(ticket_id), **extra},
+        headers=auth_headers(user),
+    )
+
+
+def test_manual_check_in_from_attendee_search(client: TestClient, door, db: Session) -> None:
+    rows = client.get(
+        f"{API}/events/{door.event.id}/attendees",
+        params={"q": "aru"},
+        headers=auth_headers(door.staff),
+    ).json()["items"]
+    assert [r["attendee_name"] for r in rows] == ["Aru"]
+    assert "qr_payload" not in rows[0]  # signed codes are never listed
+
+    resp = manual(client, door.staff, door.event.id, rows[0]["ticket_id"], device_info="gate B")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["result"] == "valid" and resp.json()["ticket"]["attendee_name"] == "Aru"
+
+    ticket = door.t["Aru"]
+    db.refresh(ticket)
+    assert ticket.status == TicketStatus.CHECKED_IN
+    [record] = db.scalars(select(CheckInRecord).where(CheckInRecord.ticket_id == ticket.id)).all()
+    assert (record.action, record.device_info) == (CheckInAction.CHECK_IN, "gate B")
+    [entry] = db.scalars(select(AuditLog).where(AuditLog.entity_id == ticket.id)).all()
+    assert entry.action_type == "ticket.checked_in" and "manually" in entry.description
+    assert entry.metadata_["method"] == "manual"
+
+    # twice → 409, and the QR of the same ticket says the same
+    again = manual(client, door.staff, door.event.id, ticket.id)
+    assert again.status_code == 409 and code(again) == "already_checked_in"
+    qr = scan(client, door.staff, "", body(door.event.id, ticket.qr_payload))
+    assert qr.status_code == 409 and code(qr) == "already_checked_in"
+
+
+@pytest.mark.parametrize("ticket_status", [TicketStatus.CANCELLED, TicketStatus.REFUNDED])
+def test_manual_check_in_rejects_cancelled_and_refunded(
+    client: TestClient, door, db: Session, ticket_status: TicketStatus
+) -> None:
+    ticket = door.t["Bek"]
+    ticket.status = ticket_status
+    db.flush()
+    resp = manual(client, door.staff, door.event.id, ticket.id)
+    assert resp.status_code == 409 and code(resp) == ticket_status.value
+    db.refresh(ticket)
+    assert ticket.status == ticket_status
+
+
+def test_manual_check_in_access_and_scope(client: TestClient, door, db: Session) -> None:
+    ticket = door.t["Aru"]
+    unassigned = make_user(db)
+    other_event = make_event(db, make_organizer(db))
+    staff_elsewhere = make_user(db)
+    db.add(StaffAssignment(event_id=other_event.id, user_id=staff_elsewhere.id))
+    db.flush()
+    for who in (unassigned, staff_elsewhere):
+        assert manual(client, who, door.event.id, ticket.id).status_code == 403
+
+    # a ticket of another event, picked for this one → wrong_event, nothing about its holder
+    tt = make_ticket_type(db, other_event)
+    make_paid_order(db, make_user(db), tt, [("Stranger", "s@example.com")])
+    foreign = db.scalar(select(Ticket).where(Ticket.event_id == other_event.id))
+    assert foreign
+    resp = manual(client, door.staff, door.event.id, foreign.id)
+    assert resp.status_code == 409 and code(resp) == "wrong_event"
+    assert resp.json()["error"]["details"]["ticket"] is None
+    db.refresh(foreign)
+    assert foreign.status == TicketStatus.VALID
+
+    assert manual(client, door.staff, door.event.id, uuid.uuid4()).status_code == 404
+
+    door.event.ends_at = datetime.now(UTC) - timedelta(minutes=1)
+    door.event.starts_at = datetime.now(UTC) - timedelta(hours=3)
+    db.flush()
+    resp = manual(client, door.staff, door.event.id, ticket.id)
+    assert resp.status_code == 409 and code(resp) == "check_in_closed"
