@@ -1,20 +1,14 @@
 """BE-24: cancellations and (simulated) refunds."""
 
-import threading
 import uuid
-from collections import Counter
-from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.engine import Engine
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.core.errors import AppError
 from app.models import (
     AuditLog,
     Order,
@@ -22,23 +16,16 @@ from app.models import (
     Refund,
     StaffAssignment,
     Ticket,
-    TicketType,
     User,
 )
 from app.models.enums import (
     OrderStatus,
-    PaymentStatus,
     RefundStatus,
     Role,
     TicketKind,
     TicketStatus,
 )
-from app.schemas.orders import AttendeeIn, OrderCreate, OrderLineIn
-from app.services import orders as orders_svc
 from app.services import refunds, ticketing
-from app.services.payments import checkout
-from app.services.payments.gateway import SimulatedGateway
-from tests.committed_data import cleanup
 from tests.factories import auth_headers, make_event, make_organizer, make_ticket_type, make_user
 from tests.test_orders import error_code, order_body, post_order
 from tests.test_promo import make_campaign
@@ -289,76 +276,3 @@ def test_event_cancellation_closes_every_order(
     assert cancelled_to == sorted([paid_buyer.email, shop.buyer.email, free_buyer.email])
     refund_to = sorted(m["to"] for m in outbox if m["kind"] == "refund_processed")
     assert refund_to == sorted([paid_buyer.email, shop.buyer.email])
-
-
-# ------------------------------------------------------------------ concurrency
-
-PARALLEL = 4
-
-
-@pytest.fixture
-def parallel_engine(engine: Engine) -> Iterator[Engine]:
-    eng = create_engine(get_settings().database_url, pool_size=PARALLEL + 2, max_overflow=0)
-    yield eng
-    eng.dispose()
-
-
-def test_parallel_refunds_refund_once(parallel_engine: Engine) -> None:
-    with Session(parallel_engine) as s:
-        org = make_organizer(s)
-        ev = make_event(s, org, paid_sales_active=True)
-        tt = make_ticket_type(s, ev, price_minor=700_000)
-        buyer = make_user(s)
-        s.commit()
-        event_id, owner_id, user_ids = ev.id, org.user_id, [org.user_id, buyer.id]
-        order = orders_svc.create_order(
-            s,
-            buyer,
-            OrderCreate(
-                event_id=ev.id,
-                items=[OrderLineIn(ticket_type_id=tt.id, quantity=1)],
-                attendees=[AttendeeIn(full_name="Guest", email="guest@example.com")],
-            ),
-        )
-        checkout.pay_order(s, buyer, order.id, simulate="success", gateway=SimulatedGateway())
-        order_id, tt_id = order.id, tt.id
-
-    try:
-        barrier = threading.Barrier(PARALLEL)
-        results: list[Any] = []
-        lock = threading.Lock()
-
-        def run() -> None:
-            with Session(parallel_engine) as db:
-                owner = db.get(User, owner_id)
-                assert owner is not None
-                db.connection()
-                barrier.wait()
-                try:
-                    outcome: Any = refunds.refund(
-                        db, owner, order_id, None, gateway=SimulatedGateway()
-                    ).status
-                except AppError as exc:
-                    outcome = exc.code
-            with lock:
-                results.append(str(outcome))
-
-        threads = [threading.Thread(target=run) for _ in range(PARALLEL)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=60)
-
-        assert Counter(results) == {"succeeded": 1, "order_already_refunded": PARALLEL - 1}
-        with Session(parallel_engine) as s:
-            assert len(refunds_of(s, order_id)) == 1
-            paid = s.scalars(
-                select(Payment).where(
-                    Payment.order_id == order_id, Payment.status == PaymentStatus.SUCCEEDED
-                )
-            ).all()
-            assert len(paid) == 1
-            ticket_type = s.get(TicketType, tt_id)
-            assert ticket_type is not None and ticket_type.quantity_sold == 0
-    finally:
-        cleanup(parallel_engine, event_id, user_ids)

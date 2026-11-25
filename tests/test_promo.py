@@ -1,21 +1,15 @@
 """BE-23: promo codes — preview + atomic redemption inside order creation."""
 
-import threading
 import uuid
-from collections import Counter
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.engine import Engine
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.core.errors import AppError
 from app.models import (
     AuditLog,
     CampaignTicketType,
@@ -26,13 +20,10 @@ from app.models import (
     PromoRedemption,
     PromotionalCampaign,
     TicketType,
-    User,
 )
 from app.models.enums import CampaignStatus, DiscountType, OrderStatus, TicketKind
-from app.schemas.orders import AttendeeIn, OrderCreate, OrderLineIn
 from app.services import campaigns, ticketing
 from app.services import orders as orders_svc
-from tests.committed_data import cleanup
 from tests.factories import auth_headers, make_event, make_organizer, make_ticket_type, make_user
 from tests.test_orders import _expire_now, error_code, order_body, post_order
 
@@ -301,76 +292,3 @@ def test_paid_order_keeps_its_redemption(client: TestClient, shop, db: Session) 
     assert campaign.redemption_count == 1
     paid = db.get(Order, order_id_of(order))
     assert paid and paid.status == OrderStatus.PAID
-
-
-# ------------------------------------------------------------------ concurrency
-
-BUYERS = 20
-LIMIT = 3
-
-
-@pytest.fixture
-def parallel_engine(engine: Engine) -> Iterator[Engine]:
-    eng = create_engine(get_settings().database_url, pool_size=BUYERS + 2, max_overflow=0)
-    yield eng
-    eng.dispose()
-
-
-def test_limit_holds_under_twenty_parallel_orders(parallel_engine: Engine) -> None:
-    with Session(parallel_engine) as s:
-        org = make_organizer(s)
-        ev = make_event(s, org, paid_sales_active=True)
-        # one ticket type per buyer: only the campaign lock can keep the limit
-        types = [make_ticket_type(s, ev, price_minor=1_000_000) for _ in range(BUYERS)]
-        campaign = make_campaign(s, ev, code="RUSH3", value=50, max_redemptions=LIMIT)
-        buyers = [make_user(s) for _ in range(BUYERS)]
-        s.commit()
-        event_id, campaign_id = ev.id, campaign.id
-        pairs = [(b.id, t.id) for b, t in zip(buyers, types, strict=True)]
-        buyer_ids = [b.id for b in buyers]
-        user_ids = [org.user_id, *buyer_ids]
-
-    try:
-        barrier = threading.Barrier(BUYERS)
-        results: list[Any] = []
-        lock = threading.Lock()
-
-        def run(buyer_id: Any, tt_id: Any) -> None:
-            data = OrderCreate(
-                event_id=event_id,
-                items=[OrderLineIn(ticket_type_id=tt_id, quantity=1)],
-                attendees=[AttendeeIn(full_name="Guest", email="guest@example.com")],
-                promo_code="RUSH3",
-            )
-            with Session(parallel_engine) as db:
-                user = db.get(User, buyer_id)
-                assert user is not None
-                db.connection()
-                barrier.wait()
-                try:
-                    order = orders_svc.create_order(db, user, data)
-                    outcome: Any = ("ok", order.discount_minor)
-                except AppError as exc:
-                    outcome = exc.code
-            with lock:
-                results.append(outcome)
-
-        threads = [threading.Thread(target=run, args=pair) for pair in pairs]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=60)
-
-        assert Counter(map(str, results)) == {
-            str(("ok", 500_000)): LIMIT,
-            "promo_exhausted": BUYERS - LIMIT,
-        }, results
-        with Session(parallel_engine) as s:
-            c = s.get(PromotionalCampaign, campaign_id)
-            assert c is not None and c.redemption_count == LIMIT
-            discounted = s.scalars(
-                select(Order).where(Order.event_id == event_id, Order.discount_minor > 0)
-            ).all()
-            assert len(discounted) == LIMIT
-    finally:
-        cleanup(parallel_engine, event_id, user_ids)

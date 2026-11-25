@@ -62,4 +62,14 @@ jobs:
           alembic upgrade head
 
       - name: Tests
-        run: pytest -q
+        run: pytest -q -m "not critical"
+
+      # Concurrency + QR security (docs/CORRECTNESS.md). Real parallel transactions, so the
+      # suite runs three times to catch flakiness.
+      - name: Correctness (critical)
+        run: |
+          for run in 1 2 3; do
+            echo "::group::critical run $run"
+            pytest -q -m critical -p no:cacheprovider
+            echo "::endgroup::"
+          done

@@ -1,26 +1,19 @@
 """BE-18: check-in API — validate, check-in, reverse, stats."""
 
-import threading
 from collections import Counter
-from collections.abc import Iterator
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.engine import Engine
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.core.errors import AppError
 from app.models import AuditLog, CheckInRecord, StaffAssignment, Ticket, User
 from app.models.enums import CheckInAction, Role, TicketKind, TicketStatus
-from app.schemas.tickets import CheckInRequest
-from app.services import campaigns, checkin
+from app.services import campaigns
 from app.services.qr_sign import sign_ticket_payload
-from tests.committed_data import cleanup
 from tests.factories import (
     auth_headers,
     make_event,
@@ -229,71 +222,3 @@ def test_stats(client: TestClient, door, db: Session) -> None:
     stranger = make_user(db)
     url = f"{API}/events/{door.event.id}/checkin-stats"
     assert client.get(url, headers=auth_headers(stranger)).status_code == 403
-
-
-# ------------------------------------------------------------------ concurrency
-
-SCANNERS = 6
-
-
-@pytest.fixture
-def parallel_engine(engine: Engine) -> Iterator[Engine]:
-    eng = create_engine(get_settings().database_url, pool_size=SCANNERS + 2, max_overflow=0)
-    yield eng
-    eng.dispose()
-
-
-def test_parallel_check_in_admits_once(parallel_engine: Engine) -> None:
-    with Session(parallel_engine) as s:
-        org = make_organizer(s)
-        ev = make_event(s, org)
-        tt = make_ticket_type(s, ev)
-        buyer = make_user(s)
-        make_paid_order(s, buyer, tt, [("Guest", "guest@example.com")])
-        staff = [make_user(s) for _ in range(SCANNERS)]
-        for u in staff:
-            s.add(StaffAssignment(event_id=ev.id, user_id=u.id))
-        s.commit()
-        ticket = s.scalar(select(Ticket).where(Ticket.event_id == ev.id))
-        assert ticket
-        event_id, qr, ticket_id = ev.id, ticket.qr_payload, ticket.id
-        staff_ids = [u.id for u in staff]
-        user_ids = [org.user_id, buyer.id, *staff_ids]
-
-    try:
-        barrier = threading.Barrier(SCANNERS)
-        results: list[Any] = []
-        lock = threading.Lock()
-
-        def run(staff_id: Any) -> None:
-            with Session(parallel_engine) as db:
-                user = db.get(User, staff_id)
-                assert user is not None
-                db.connection()
-                barrier.wait()
-                try:
-                    outcome: Any = checkin.check_in(
-                        db, user, CheckInRequest(event_id=event_id, qr_payload=qr)
-                    ).result
-                except AppError as exc:
-                    outcome = (exc.status_code, exc.code)
-            with lock:
-                results.append(outcome)
-
-        threads = [threading.Thread(target=run, args=(sid,)) for sid in staff_ids]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=60)
-
-        assert Counter(map(str, results)) == {
-            "valid": 1,
-            str((409, "already_checked_in")): SCANNERS - 1,
-        }, results
-        with Session(parallel_engine) as s:
-            records = s.scalars(
-                select(CheckInRecord).where(CheckInRecord.ticket_id == ticket_id)
-            ).all()
-            assert len(records) == 1
-    finally:
-        cleanup(parallel_engine, event_id, user_ids)

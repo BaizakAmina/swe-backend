@@ -1,25 +1,17 @@
 """BE-16: paid-sales activation — checklist + simulated activation fee."""
 
-import threading
-from collections import Counter
-from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.engine import Engine
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.errors import AppError
-from app.models import AuditLog, Event, OrganizerProfile, Payment, PayoutAccount, User
+from app.models import AuditLog, OrganizerProfile, Payment, PayoutAccount, User
 from app.models.enums import PaymentPurpose, PaymentStatus, Role, VerificationStatus
 from app.services import platform_settings
-from app.services.payments import activation
-from app.services.payments.gateway import SimulatedGateway
-from tests.committed_data import cleanup
 from tests.factories import auth_headers, make_event, make_organizer, make_ticket_type, make_user
 from tests.test_orders import error_code, order_body, post_order
 
@@ -196,62 +188,3 @@ def test_activation_fee_visible_in_admin(client: TestClient, ready, db: Session)
     mine = [r for r in records["items"] if r["event_id"] == str(ready.event.id)]
     assert len(mine) == 1
     assert mine[0]["purpose"] == PaymentPurpose.ACTIVATION_FEE and mine[0]["is_simulated"] is True
-
-
-# ------------------------------------------------------------------ concurrency
-
-PARALLEL = 4
-
-
-@pytest.fixture
-def parallel_engine(engine: Engine) -> Iterator[Engine]:
-    eng = create_engine(get_settings().database_url, pool_size=PARALLEL + 2, max_overflow=0)
-    yield eng
-    eng.dispose()
-
-
-def test_parallel_activation_charges_once(parallel_engine: Engine) -> None:
-    with Session(parallel_engine) as s:
-        org = ready_organizer(s)
-        ev = make_event(s, org, paid_sales_active=False)
-        s.commit()
-        event_id, owner_id = ev.id, org.user_id
-
-    try:
-        barrier = threading.Barrier(PARALLEL)
-        results: list[Any] = []
-        lock = threading.Lock()
-
-        def run() -> None:
-            with Session(parallel_engine) as db:
-                owner = db.get(User, owner_id)
-                assert owner is not None
-                db.connection()
-                barrier.wait()
-                try:
-                    status = activation.activate(
-                        db, owner, event_id, simulate="success", gateway=SimulatedGateway()
-                    )
-                    outcome: Any = status.paid_sales_active
-                except AppError as exc:
-                    outcome = exc.code
-            with lock:
-                results.append(outcome)
-
-        threads = [threading.Thread(target=run) for _ in range(PARALLEL)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=60)
-
-        assert Counter(map(str, results)) == {
-            "True": 1,
-            "paid_sales_already_active": PARALLEL - 1,
-        }, results
-        with Session(parallel_engine) as s:
-            fees = s.scalars(select(Payment).where(Payment.event_id == event_id)).all()
-            assert [p.status for p in fees] == [PaymentStatus.SUCCEEDED]
-            event = s.get(Event, event_id)
-            assert event is not None and event.paid_sales_active
-    finally:
-        cleanup(parallel_engine, event_id, [owner_id])
