@@ -25,11 +25,11 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.models import Event, Order, Seat, SeatHold, User, Venue, VenueRow, VenueSection
 from app.models.enums import EventStatus, OrderStatus, SeatingMode
 from app.schemas.seating import RowRead, SeatMapRead, SeatRead, SectionRead
+from app.services import platform_settings
 from app.services.venues import SEAT_ORDER
 
 
@@ -154,7 +154,7 @@ def hold(
     db: Session, user: User, event_id: uuid.UUID, seat_ids: Sequence[uuid.UUID]
 ) -> list[SeatHold]:
     """Hold seats for ``seat_hold_ttl_minutes``. 409 ``seat_unavailable`` lists taken seats."""
-    settings = get_settings()
+    max_holds = platform_settings.max_seat_holds_per_user(db)
     event = _assigned_event(db, event_id)
     now = _now()
     if (
@@ -185,15 +185,15 @@ def hold(
             SeatHold.expires_at > now,
         )
     ).all()
-    if len(mine) + len(wanted) > settings.max_seat_holds_per_user:
+    if len(mine) + len(wanted) > max_holds:
         raise AppError(
             "seat_hold_limit",
-            f"At most {settings.max_seat_holds_per_user} seats can be held at once",
+            f"At most {max_holds} seats can be held at once",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
     _release_expired_free_holds(db, event.id, wanted, now)
-    expires_at = now + timedelta(minutes=settings.seat_hold_ttl_minutes)
+    expires_at = now + timedelta(minutes=platform_settings.seat_hold_ttl_minutes(db))
     holds = [
         SeatHold(
             seat_id=seat_id,

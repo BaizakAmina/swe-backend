@@ -28,7 +28,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.models import Attendee, Event, Order, OrderItem, SeatHold, TicketType, User
 from app.models.enums import (
@@ -37,7 +36,15 @@ from app.models.enums import (
     SeatingMode,
 )
 from app.schemas.orders import OrderCreate
-from app.services import audit, notifications, permissions, promo, seating, ticketing
+from app.services import (
+    audit,
+    notifications,
+    permissions,
+    platform_settings,
+    promo,
+    seating,
+    ticketing,
+)
 from app.services.audit import AuditAction
 from app.services.payments.records import has_succeeded_ticket_payment
 from app.services.ticket_types import is_on_sale, is_sellable
@@ -194,6 +201,7 @@ def _build_order(
     currency: str,
     now: datetime,
     discount: int = 0,
+    reservation_minutes: int = 10,
 ) -> Order:
     """Order + one item (with a price snapshot) and one attendee per ticket.
 
@@ -225,7 +233,7 @@ def _build_order(
         discount_minor=discount,
         fees_minor=fees,
         total_minor=subtotal - discount + fees,
-        reserved_until=now + timedelta(minutes=get_settings().reservation_ttl_minutes),
+        reserved_until=now + timedelta(minutes=reservation_minutes),
         items=items,
     )
 
@@ -278,7 +286,14 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
         else []
     )
     order = _build_order(
-        user, event, data, types, currency, now, quote.discount_minor if quote else 0
+        user,
+        event,
+        data,
+        types,
+        currency,
+        now,
+        quote.discount_minor if quote else 0,
+        platform_settings.reservation_ttl_minutes(db),
     )
     db.add(order)
     for tt_id, qty in quantities.items():

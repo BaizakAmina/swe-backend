@@ -9,18 +9,46 @@ import csv
 import io
 import uuid
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import ConflictError, NotFoundError
-from app.models import Event, Order, OrganizerProfile, Payment, User, UserRole
-from app.models.enums import EventStatus, PaymentPurpose, Role, UserStatus
-from app.schemas.admin import AdminEventRead, AdminUserRead, PlatformSettingsRead
-from app.schemas.common import Page, Pagination
+from app.models import (
+    Event,
+    Order,
+    OrganizerProfile,
+    Payment,
+    PromoCode,
+    PromoRedemption,
+    PromotionalCampaign,
+    SupportCase,
+    User,
+    UserRole,
+)
+from app.models.enums import (
+    EventStatus,
+    OrderStatus,
+    PaymentPurpose,
+    PaymentStatus,
+    Role,
+    SupportCategory,
+    SupportStatus,
+    UserStatus,
+)
+from app.schemas.admin import (
+    AdminEventRead,
+    AdminUserRead,
+    PlatformSettingsRead,
+    PlatformSettingsUpdate,
+    PromoActivityRead,
+    ReportedEventRead,
+)
+from app.schemas.common import Page, Pagination, Period
 from app.schemas.orders import OrderRead, PaymentRead
-from app.services import audit, platform_settings, views
+from app.schemas.support import SupportCaseRead
+from app.services import audit, platform_settings, support, views
 from app.services.audit import AuditAction
 from app.services.auth import revoke_all_sessions
 
@@ -220,21 +248,93 @@ def unsuspend_event(db: Session, admin: User, event_id: uuid.UUID) -> AdminEvent
 # ------------------------------------------------------------------ orders & payments
 
 
+def _in_period(column: Any, period: Period | None) -> list[ColumnElement[bool]]:
+    if period is None:
+        return []
+    clauses = []
+    if period.start is not None:
+        clauses.append(column >= period.start)
+    if period.end is not None:
+        clauses.append(column < period.end)
+    return clauses
+
+
+def _as_uuid(q: str) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(q)
+    except ValueError:
+        return None
+
+
 def list_orders(
-    db: Session, page: Pagination, event_id: uuid.UUID | None = None
+    db: Session,
+    page: Pagination,
+    event_id: uuid.UUID | None = None,
+    q: str | None = None,
+    order_status: OrderStatus | None = None,
+    period: Period | None = None,
 ) -> Page[OrderRead]:
-    stmt = select(Order)
+    """``q``: order id, buyer email / name, event title or promo code."""
+    stmt = select(Order).where(*_in_period(Order.created_at, period))
     if event_id:
         stmt = stmt.where(Order.event_id == event_id)
+    if order_status:
+        stmt = stmt.where(Order.status == order_status)
+    if q and q.strip():
+        q = q.strip()
+        exact = _as_uuid(q)
+        if exact is not None:
+            stmt = stmt.where(Order.id == exact)
+        else:
+            pattern = f"%{q}%"
+            stmt = stmt.where(
+                or_(
+                    Order.buyer_user_id.in_(
+                        select(User.id).where(
+                            or_(User.email.ilike(pattern), User.full_name.ilike(pattern))
+                        )
+                    ),
+                    Order.event_id.in_(select(Event.id).where(Event.title.ilike(pattern))),
+                    Order.promo_code_id.in_(
+                        select(PromoCode.id).where(PromoCode.code.ilike(pattern))
+                    ),
+                )
+            )
     return views.page_orders(db, stmt, page)
 
 
 def list_payments(
-    db: Session, page: Pagination, purpose: PaymentPurpose | None = None
+    db: Session,
+    page: Pagination,
+    purpose: PaymentPurpose | None = None,
+    q: str | None = None,
+    payment_status: PaymentStatus | None = None,
+    period: Period | None = None,
 ) -> Page[PaymentRead]:
-    stmt = select(Payment)
+    """``q``: payment / order id, provider reference, payer email / name or event title."""
+    stmt = select(Payment).where(*_in_period(Payment.created_at, period))
     if purpose:
         stmt = stmt.where(Payment.purpose == purpose)
+    if payment_status:
+        stmt = stmt.where(Payment.status == payment_status)
+    if q and q.strip():
+        q = q.strip()
+        exact = _as_uuid(q)
+        if exact is not None:
+            stmt = stmt.where(or_(Payment.id == exact, Payment.order_id == exact))
+        else:
+            pattern = f"%{q}%"
+            stmt = stmt.where(
+                or_(
+                    Payment.provider_ref.ilike(pattern),
+                    Payment.payer_user_id.in_(
+                        select(User.id).where(
+                            or_(User.email.ilike(pattern), User.full_name.ilike(pattern))
+                        )
+                    ),
+                    Payment.event_id.in_(select(Event.id).where(Event.title.ilike(pattern))),
+                )
+            )
     total = _count(db, stmt)
     rows = db.scalars(
         stmt.order_by(Payment.created_at.desc()).limit(page.limit).offset(page.offset)
@@ -247,25 +347,189 @@ def list_payments(
     )
 
 
+# ------------------------------------------------------------------ monitoring lists
+
+_OPEN_CASE = SupportCase.status != SupportStatus.RESOLVED
+DISPUTE_CATEGORIES = (SupportCategory.PAYMENT, SupportCategory.REFUND)
+
+
+def reported_events(
+    db: Session,
+    page: Pagination,
+    q: str | None = None,
+    only_open: bool = True,
+    period: Period | None = None,
+) -> Page[ReportedEventRead]:
+    """Events with support cases, most open cases first."""
+    open_count = func.count().filter(_OPEN_CASE)
+    stats = (
+        select(
+            SupportCase.event_id.label("event_id"),
+            open_count.label("open_cases"),
+            func.count().label("total_cases"),
+            func.max(SupportCase.created_at).label("last_reported_at"),
+        )
+        .where(SupportCase.event_id.is_not(None), *_in_period(SupportCase.created_at, period))
+        .group_by(SupportCase.event_id)
+    )
+    if only_open:
+        stats = stats.having(open_count > 0)
+    sub = stats.subquery()
+    stmt = (
+        select(Event, OrganizerProfile.display_name, sub.c.open_cases, sub.c.total_cases)
+        .add_columns(sub.c.last_reported_at)
+        .join(sub, sub.c.event_id == Event.id)
+        .join(OrganizerProfile, OrganizerProfile.id == Event.organizer_id)
+    )
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(Event.title.ilike(pattern), OrganizerProfile.display_name.ilike(pattern))
+        )
+    total = _count(db, stmt)
+    rows = db.execute(
+        stmt.order_by(sub.c.open_cases.desc(), sub.c.last_reported_at.desc(), Event.id)
+        .limit(page.limit)
+        .offset(page.offset)
+    ).tuples()
+    items = [
+        ReportedEventRead(
+            event_id=ev.id,
+            title=ev.title,
+            organizer_id=ev.organizer_id,
+            organizer_name=organizer_name,
+            status=ev.status,
+            suspended=ev.suspended_at is not None,
+            open_cases=open_cases,
+            total_cases=total_cases,
+            last_reported_at=last,
+        )
+        for ev, organizer_name, open_cases, total_cases, last in rows
+    ]
+    return Page(items=items, total=total, limit=page.limit, offset=page.offset)
+
+
+def disputes(
+    db: Session,
+    page: Pagination,
+    q: str | None = None,
+    case_status: SupportStatus | None = None,
+    period: Period | None = None,
+) -> Page[SupportCaseRead]:
+    """Payment and refund support cases (the dispute queue), newest activity first."""
+    stmt = select(SupportCase).where(
+        SupportCase.category.in_(DISPUTE_CATEGORIES), *_in_period(SupportCase.created_at, period)
+    )
+    if case_status:
+        stmt = stmt.where(SupportCase.status == case_status)
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                SupportCase.subject.ilike(pattern),
+                SupportCase.opened_by_user_id.in_(
+                    select(User.id).where(
+                        or_(User.email.ilike(pattern), User.full_name.ilike(pattern))
+                    )
+                ),
+                SupportCase.event_id.in_(select(Event.id).where(Event.title.ilike(pattern))),
+            )
+        )
+    total = _count(db, stmt)
+    rows = db.scalars(
+        stmt.order_by(SupportCase.updated_at.desc(), SupportCase.id)
+        .limit(page.limit)
+        .offset(page.offset)
+    ).all()
+    return Page(
+        items=support.cases_to_read(db, rows), total=total, limit=page.limit, offset=page.offset
+    )
+
+
+def promo_activity(
+    db: Session,
+    page: Pagination,
+    q: str | None = None,
+    event_id: uuid.UUID | None = None,
+    period: Period | None = None,
+) -> Page[PromoActivityRead]:
+    """Promo-code uses, newest first; ``released`` = the order expired or was cancelled."""
+    stmt = (
+        select(PromoRedemption, PromoCode, PromotionalCampaign, Event, Order, User.email)
+        .join(PromoCode, PromoCode.id == PromoRedemption.promo_code_id)
+        .join(PromotionalCampaign, PromotionalCampaign.id == PromoCode.campaign_id)
+        .join(Event, Event.id == PromotionalCampaign.event_id)
+        .join(Order, Order.id == PromoRedemption.order_id)
+        .join(User, User.id == Order.buyer_user_id)
+        .where(*_in_period(PromoRedemption.redeemed_at, period))
+    )
+    if event_id:
+        stmt = stmt.where(Event.id == event_id)
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                PromoCode.code.ilike(pattern),
+                PromotionalCampaign.name.ilike(pattern),
+                Event.title.ilike(pattern),
+                User.email.ilike(pattern),
+            )
+        )
+    total = _count(db, stmt)
+    rows = db.execute(
+        stmt.order_by(PromoRedemption.redeemed_at.desc(), PromoRedemption.id)
+        .limit(page.limit)
+        .offset(page.offset)
+    ).tuples()
+    items = [
+        PromoActivityRead(
+            id=r.id,
+            redeemed_at=r.redeemed_at,
+            released=r.released_at is not None,
+            code=code.code,
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            event_id=ev.id,
+            event_title=ev.title,
+            order_id=order.id,
+            order_status=order.status,
+            buyer_email=email,
+            discount_minor=r.discount_applied_minor,
+        )
+        for r, code, campaign, ev, order, email in rows
+    ]
+    return Page(items=items, total=total, limit=page.limit, offset=page.offset)
+
+
 # ------------------------------------------------------------------ settings
 
 
 def get_settings(db: Session) -> PlatformSettingsRead:
-    return PlatformSettingsRead(activation_fee_minor=platform_settings.activation_fee_minor(db))
-
-
-def update_settings(db: Session, admin: User, activation_fee_minor: int) -> PlatformSettingsRead:
-    old = platform_settings.activation_fee_minor(db)
-    platform_settings.set_value(db, platform_settings.ACTIVATION_FEE, activation_fee_minor)
-    audit.log(
-        db,
-        actor_id=admin.id,
-        action=AuditAction.PLATFORM_SETTING_UPDATED,
-        entity_type="platform_setting",
-        entity_id=uuid.uuid5(uuid.NAMESPACE_URL, platform_settings.ACTIVATION_FEE),
-        description=f"Activation fee {old} → {activation_fee_minor}",
-        metadata={"key": platform_settings.ACTIVATION_FEE, "old": old, "new": activation_fee_minor},
+    return PlatformSettingsRead(
+        activation_fee_minor=platform_settings.activation_fee_minor(db),
+        reservation_ttl_minutes=platform_settings.reservation_ttl_minutes(db),
+        seat_hold_ttl_minutes=platform_settings.seat_hold_ttl_minutes(db),
+        max_seat_holds_per_user=platform_settings.max_seat_holds_per_user(db),
+        paid_terms_version=platform_settings.paid_terms_version(db),
     )
+
+
+def update_settings(db: Session, admin: User, data: PlatformSettingsUpdate) -> PlatformSettingsRead:
+    """Each changed key is stored and audited separately."""
+    for key, value in data.model_dump(exclude_unset=True, exclude_none=True).items():
+        old = platform_settings.current(db, key)
+        if old == value:
+            continue
+        platform_settings.set_value(db, key, value)
+        audit.log(
+            db,
+            actor_id=admin.id,
+            action=AuditAction.PLATFORM_SETTING_UPDATED,
+            entity_type="platform_setting",
+            entity_id=uuid.uuid5(uuid.NAMESPACE_URL, key),
+            description=f"{key}: {old} → {value}",
+            metadata={"key": key, "old": old, "new": value},
+        )
     db.commit()
     return get_settings(db)
 
@@ -275,12 +539,15 @@ def update_settings(db: Session, admin: User, activation_fee_minor: int) -> Plat
 Report = Literal["users", "events", "orders", "payments"]
 
 
-def report_csv(db: Session, report: Report) -> str:
+def report_csv(db: Session, report: Report, period: Period | None = None) -> str:
+    """Users / orders / payments by ``created_at``, events by ``starts_at``."""
     buf = io.StringIO()
     w = csv.writer(buf)
     if report == "users":
         w.writerow(["id", "email", "full_name", "roles", "status", "email_verified", "created_at"])
-        for u in db.scalars(select(User).order_by(User.created_at)):
+        for u in db.scalars(
+            select(User).where(*_in_period(User.created_at, period)).order_by(User.created_at)
+        ):
             w.writerow(
                 [
                     u.id,
@@ -295,7 +562,10 @@ def report_csv(db: Session, report: Report) -> str:
     elif report == "events":
         w.writerow(["id", "title", "organizer", "status", "starts_at", "capacity", "suspended"])
         for e in db.scalars(
-            select(Event).options(selectinload(Event.organizer)).order_by(Event.starts_at)
+            select(Event)
+            .where(*_in_period(Event.starts_at, period))
+            .options(selectinload(Event.organizer))
+            .order_by(Event.starts_at)
         ):
             w.writerow(
                 [
@@ -312,7 +582,9 @@ def report_csv(db: Session, report: Report) -> str:
         w.writerow(
             ["id", "event_id", "buyer_user_id", "status", "total_minor", "currency", "paid_at"]
         )
-        for o in db.scalars(select(Order).order_by(Order.created_at)):
+        for o in db.scalars(
+            select(Order).where(*_in_period(Order.created_at, period)).order_by(Order.created_at)
+        ):
             w.writerow(
                 [
                     o.id,
@@ -328,7 +600,11 @@ def report_csv(db: Session, report: Report) -> str:
         w.writerow(
             ["id", "purpose", "order_id", "event_id", "amount_minor", "status", "is_simulated"]
         )
-        for p in db.scalars(select(Payment).order_by(Payment.created_at)):
+        for p in db.scalars(
+            select(Payment)
+            .where(*_in_period(Payment.created_at, period))
+            .order_by(Payment.created_at)
+        ):
             w.writerow(
                 [
                     p.id,
