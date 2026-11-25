@@ -381,6 +381,20 @@ def _release_many(
     db.flush()
 
 
+def return_sold(db: Session, paid_orders: Sequence[Order]) -> None:
+    """Paid orders being cancelled / refunded (BE-24): ``quantity_sold -= n`` and promo uses
+    released. Ticket types locked in ``id`` order, then campaigns. Caller holds the order locks.
+    """
+    total: Counter[uuid.UUID] = Counter()
+    for order in paid_orders:
+        total.update(_quantities(order))
+    types = _lock_ticket_types(db, total)
+    for tt_id, qty in total.items():
+        types[tt_id].quantity_sold -= qty
+    promo.release(db, paid_orders)
+    db.flush()
+
+
 def release(
     db: Session,
     order: Order,
