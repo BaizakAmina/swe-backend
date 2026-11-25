@@ -224,7 +224,7 @@ def get_ticket_for_user(db: Session, user: User, ticket_id: uuid.UUID) -> Ticket
     return ticket
 
 
-# ------------------------------------------------------------------ organizer attendee list
+# ------------------------------------------- attendee list (organizer + door staff)
 
 
 def _attendee_stmt(
@@ -259,11 +259,15 @@ def _attendee_stmt(
 def _row(t: Ticket, a: Attendee, i: OrderItem, tt: TicketType) -> AttendeeRow:
     return AttendeeRow(
         ticket_id=t.id,
+        ticket_code=t.ticket_code,
         attendee_name=a.full_name,
         attendee_email=a.email,
         ticket_type_name=tt.name,
         ticket_status=t.status,
         order_id=i.order_id,
+        section=i.section,
+        row_label=i.row_label,
+        seat_number=i.seat_number,
         checked_in_at=t.checked_in_at,
     )
 
