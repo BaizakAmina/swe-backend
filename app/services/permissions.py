@@ -62,6 +62,11 @@ def can_staff_event(db: Session, user: User, event: Event) -> bool:
     return can_manage_event(db, user, event) or is_assigned_event_admin(db, user, event.id)
 
 
+def can_reverse_check_in(db: Session, user: User, event: Event) -> bool:
+    """Undo a mistaken check-in. MVP rule: everyone who may scan the event may also undo."""
+    return can_staff_event(db, user, event)
+
+
 def get_event(db: Session, event_id: uuid.UUID) -> Event:
     event = db.get(Event, event_id)
     if event is None:
