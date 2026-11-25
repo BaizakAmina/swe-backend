@@ -11,26 +11,17 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, delete, select, text
+from sqlalchemy import create_engine, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.models import (
-    Attendee,
-    AuditLog,
-    Event,
-    Order,
-    OrderItem,
-    OrganizerProfile,
-    TicketType,
-    User,
-    UserRole,
-)
+from app.models import Order, TicketType, User
 from app.models.enums import OrderStatus
 from app.schemas.orders import AttendeeIn, OrderCreate, OrderLineIn
 from app.services import orders as orders_svc
+from tests.committed_data import cleanup
 from tests.factories import make_event, make_organizer, make_ticket_type, make_user
 
 pytestmark = pytest.mark.db
@@ -44,30 +35,6 @@ def parallel_engine(engine: Engine) -> Iterator[Engine]:
     eng = create_engine(get_settings().database_url, pool_size=BUYERS + 2, max_overflow=0)
     yield eng
     eng.dispose()
-
-
-def _cleanup(eng: Engine, event_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None:
-    """Delete everything the test committed.
-
-    ``audit_log`` is append-only (trigger) and references users, so the delete runs with
-    triggers off for this one transaction (needs the DB owner/superuser — as in CI and the
-    docker-compose database). Children are deleted explicitly because FK cascades are
-    triggers too.
-    """
-    with eng.begin() as conn:
-        conn.execute(text("SET LOCAL session_replication_role = replica"))
-        order_ids = select(Order.id).where(Order.event_id == event_id)
-        item_ids = select(OrderItem.id).where(OrderItem.order_id.in_(order_ids))
-        conn.execute(delete(AuditLog).where(AuditLog.event_id == event_id))
-        conn.execute(delete(AuditLog).where(AuditLog.actor_user_id.in_(user_ids)))
-        conn.execute(delete(Attendee).where(Attendee.order_item_id.in_(item_ids)))
-        conn.execute(delete(OrderItem).where(OrderItem.order_id.in_(order_ids)))
-        conn.execute(delete(Order).where(Order.event_id == event_id))
-        conn.execute(delete(TicketType).where(TicketType.event_id == event_id))
-        conn.execute(delete(Event).where(Event.id == event_id))
-        conn.execute(delete(OrganizerProfile).where(OrganizerProfile.user_id.in_(user_ids)))
-        conn.execute(delete(UserRole).where(UserRole.user_id.in_(user_ids)))
-        conn.execute(delete(User).where(User.id.in_(user_ids)))
 
 
 def test_last_ticket_twenty_parallel_buyers(parallel_engine: Engine) -> None:
@@ -127,4 +94,4 @@ def test_last_ticket_twenty_parallel_buyers(parallel_engine: Engine) -> None:
             ).all()
             assert len(pending) == 1
     finally:
-        _cleanup(parallel_engine, event_id, user_ids)
+        cleanup(parallel_engine, event_id, user_ids)

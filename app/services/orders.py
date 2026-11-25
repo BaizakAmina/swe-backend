@@ -30,8 +30,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
-from app.models import Attendee, Event, Order, OrderItem, TicketType, User
-from app.models.enums import EventStatus, OrderStatus, SeatingMode
+from app.models import Attendee, Event, Order, OrderItem, Payment, TicketType, User
+from app.models.enums import (
+    EventStatus,
+    OrderStatus,
+    PaymentPurpose,
+    PaymentStatus,
+    SeatingMode,
+)
 from app.schemas.orders import OrderCreate
 from app.services import audit, notifications, permissions
 from app.services.audit import AuditAction
@@ -284,17 +290,31 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
 # ------------------------------------------------------------------ helpers for other modules
 
 
+def _has_succeeded_payment(db: Session, order: Order) -> bool:
+    db.flush()
+    stmt = select(Payment.id).where(
+        Payment.order_id == order.id,
+        Payment.purpose == PaymentPurpose.TICKET_PURCHASE,
+        Payment.status == PaymentStatus.SUCCEEDED,
+        Payment.amount_minor == order.total_minor,
+    )
+    return db.scalar(stmt.limit(1)) is not None
+
+
 def mark_paid(db: Session, order: Order, *, actor_id: uuid.UUID | None = None) -> Order:
     """pending → paid: reserved → sold for every item, then ``on_order_paid_hooks``.
 
     For BE-15 (payment succeeded) and free registration. The caller holds the order row lock
     (:func:`lock_order`), handles an expired reservation first (:func:`expire_if_stale`) and
-    commits afterwards.
+    commits afterwards. A paid order needs a succeeded payment for its full total — so tickets
+    are never issued without one.
     """
     if order.status != OrderStatus.PENDING:
         raise ConflictError("order_not_pending", f"Order is {order.status}, not pending")
     if _is_stale(order):
         raise ConflictError("reservation_expired", "The reservation for this order has expired")
+    if order.total_minor > 0 and not _has_succeeded_payment(db, order):
+        raise ConflictError("payment_required", "The order has no succeeded payment")
 
     quantities = _quantities(order)
     types = _lock_ticket_types(db, quantities)

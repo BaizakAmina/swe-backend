@@ -9,8 +9,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Connection, event, select, update
 from sqlalchemy.orm import Session
 
-from app.models import Attendee, AuditLog, Order, OrderItem, TicketType, User
-from app.models.enums import EventStatus, OrderStatus, Role, TicketKind
+from app.core.errors import AppError
+from app.models import Attendee, AuditLog, Order, OrderItem, Payment, TicketType, User
+from app.models.enums import (
+    EventStatus,
+    OrderStatus,
+    PaymentPurpose,
+    PaymentStatus,
+    Role,
+    TicketKind,
+)
 from app.services import orders as orders_svc
 from tests.factories import auth_headers, make_event, make_organizer, make_ticket_type, make_user
 
@@ -367,6 +375,18 @@ def test_mark_paid_and_release_helpers(client: TestClient, shop, db: Session, mo
 
     # what BE-15 does after a successful payment
     order = orders_svc.lock_order(db, a["id"])
+    with pytest.raises(AppError) as no_payment:
+        orders_svc.mark_paid(db, order)
+    assert no_payment.value.code == "payment_required" and issued == []
+    db.add(
+        Payment(
+            order_id=order.id,
+            payer_user_id=shop.buyer.id,
+            purpose=PaymentPurpose.TICKET_PURCHASE,
+            amount_minor=order.total_minor,
+            status=PaymentStatus.SUCCEEDED,
+        )
+    )
     orders_svc.mark_paid(db, order, actor_id=shop.buyer.id)
     db.commit()
     assert order.status == OrderStatus.PAID and issued == [order.id]
