@@ -3,7 +3,6 @@ import uuid
 from fastapi import APIRouter, Response, status
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, StaffedEvent
-from app.api.v1._stub import not_implemented
 from app.models.enums import TicketStatus
 from app.schemas.common import Page, Pagination
 from app.schemas.tickets import (
@@ -13,7 +12,7 @@ from app.schemas.tickets import (
     CheckInStats,
     TicketRead,
 )
-from app.services import pdf, qr_image, views
+from app.services import checkin, pdf, qr_image, views
 
 router = APIRouter(tags=["tickets"])
 checkin_router = APIRouter(tags=["check-in (mobile)"])
@@ -93,13 +92,22 @@ def event_attendees_csv(event: ManagedEvent, db: DbSession) -> Response:
 
 @checkin_router.post("/checkin/validate", response_model=CheckInResponse)
 def validate_ticket(data: CheckInRequest, user: CurrentUser, db: DbSession) -> CheckInResponse:
-    """Read-only check of a scanned QR. Campaign QR codes are rejected."""
-    not_implemented("BE-18")
+    """Read-only check of a scanned QR. Campaign QR codes are rejected.
+
+    Always 200 — the verdict is ``result``. Assigned event admin, organizer or platform admin.
+    """
+    return checkin.validate(db, user, data)
 
 
 @checkin_router.post("/checkin", response_model=CheckInResponse)
 def check_in(data: CheckInRequest, user: CurrentUser, db: DbSession) -> CheckInResponse:
-    not_implemented("BE-18")
+    """Admit a ticket once (``result: valid``).
+
+    Errors (``error.code`` = the ``result``; ``error.details`` has ``result`` and ``ticket``):
+    409 ``already_checked_in`` (message has the time of the first scan), ``cancelled``,
+    ``refunded``, ``wrong_event``; 422 ``invalid_qr``, ``campaign_qr_not_admission``.
+    """
+    return checkin.check_in(db, user, data)
 
 
 @checkin_router.post(
@@ -108,9 +116,11 @@ def check_in(data: CheckInRequest, user: CurrentUser, db: DbSession) -> CheckInR
     status_code=status.HTTP_200_OK,
 )
 def reverse_check_in(ticket_id: uuid.UUID, user: CurrentUser, db: DbSession) -> CheckInResponse:
-    not_implemented("BE-18")
+    """Undo a mistaken check-in (``checked_in → valid``). 409 ``not_checked_in`` otherwise."""
+    return checkin.reverse(db, user, ticket_id)
 
 
 @checkin_router.get("/events/{event_id}/checkin-stats", response_model=CheckInStats)
 def checkin_stats(event: StaffedEvent, db: DbSession) -> CheckInStats:
-    not_implemented("BE-18")
+    """Issued (valid + checked in), checked in, remaining — total and per ticket type."""
+    return checkin.stats(db, event)
