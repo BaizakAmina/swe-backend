@@ -29,8 +29,11 @@ from app.core.errors import AppError, ForbiddenError
 from app.models import Event, User
 from app.models.enums import Role, UserStatus
 from app.services import permissions
+from app.services.payments.gateway import PaymentGateway, get_gateway
 
 DbSession = Annotated[Session, Depends(get_db)]
+# Selected by settings.payment_gateway; tests override ``get_gateway``.
+PaymentGatewayDep = Annotated[PaymentGateway, Depends(get_gateway)]
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 

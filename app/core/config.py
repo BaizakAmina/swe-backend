@@ -54,6 +54,8 @@ class Settings(BaseSettings):
 
     # Payments (simulated)
     activation_fee_minor: int = 500_000  # 5 000 KZT
+    # PaymentGateway implementation (app/services/payments/gateway.py); only "simulated" for now.
+    payment_gateway: str = "simulated"
 
 
 @lru_cache

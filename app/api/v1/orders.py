@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from app.api.deps import CurrentUser, DbSession, ManagedEvent, VerifiedUser
+from app.api.deps import CurrentUser, DbSession, ManagedEvent, PaymentGatewayDep, VerifiedUser
 from app.api.v1._stub import not_implemented
 from app.models.enums import OrderStatus
 from app.schemas.common import Page, Pagination
@@ -17,6 +17,7 @@ from app.schemas.orders import (
 )
 from app.services import orders as svc
 from app.services import views
+from app.services.payments import checkout
 
 router = APIRouter(tags=["orders & payments"])
 
@@ -50,10 +51,20 @@ def register_free(order_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Orde
 
 @router.post("/orders/{order_id}/pay", response_model=PaymentRead)
 def pay_order(
-    order_id: uuid.UUID, data: PayRequest, user: CurrentUser, db: DbSession
+    order_id: uuid.UUID,
+    data: PayRequest,
+    user: CurrentUser,
+    db: DbSession,
+    gateway: PaymentGatewayDep,
 ) -> PaymentRead:
-    """Simulated payment; tickets are issued only on success."""
-    not_implemented("BE-15")
+    """Simulated payment (``is_simulated: true``); tickets are issued only on success.
+
+    Only the buyer, only a pending order within ``reserved_until``. The response is the payment:
+    ``status`` is ``succeeded`` or ``failed``. After a failure the order stays pending until
+    ``reserved_until`` and can be paid again. Paying a paid order → 409 ``order_already_paid``.
+    """
+    payment = checkout.pay_order(db, user, order_id, simulate=data.simulate, gateway=gateway)
+    return PaymentRead.model_validate(payment)
 
 
 @router.post("/orders/{order_id}/cancel-registration", response_model=OrderRead)
