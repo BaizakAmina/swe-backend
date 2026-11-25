@@ -3,7 +3,6 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, PaymentGatewayDep, VerifiedUser
-from app.api.v1._stub import not_implemented
 from app.models.enums import OrderStatus
 from app.schemas.common import Page, Pagination
 from app.schemas.orders import (
@@ -16,7 +15,7 @@ from app.schemas.orders import (
     RefundRequest,
 )
 from app.services import orders as svc
-from app.services import views
+from app.services import refunds, views
 from app.services.payments import activation, checkout
 
 router = APIRouter(tags=["orders & payments"])
@@ -69,14 +68,30 @@ def pay_order(
 
 @router.post("/orders/{order_id}/cancel-registration", response_model=OrderRead)
 def cancel_registration(order_id: uuid.UUID, user: CurrentUser, db: DbSession) -> OrderRead:
-    not_implemented("BE-24")
+    """Cancel a free registration: tickets cancelled, places released. Buyer or organizer.
+
+    409: ``order_not_free`` (paid orders are refunded), ``ticket_already_checked_in``,
+    ``order_already_cancelled``.
+    """
+    return views.order_to_read(db, refunds.cancel_registration(db, user, order_id))
 
 
 @router.post("/orders/{order_id}/refund", response_model=RefundRead)
 def refund_order(
-    order_id: uuid.UUID, data: RefundRequest, user: CurrentUser, db: DbSession
+    order_id: uuid.UUID,
+    data: RefundRequest,
+    user: CurrentUser,
+    db: DbSession,
+    gateway: PaymentGatewayDep,
 ) -> RefundRead:
-    not_implemented("BE-24")
+    """Full refund (simulated, ``is_simulated: true``) by the event organizer or a platform admin.
+
+    Tickets → ``refunded`` (they no longer pass check-in), places released, order → ``refunded``.
+    409: ``order_already_refunded``, ``ticket_already_checked_in``, ``order_is_free``.
+    """
+    return RefundRead.model_validate(
+        refunds.refund(db, user, order_id, data.reason, gateway=gateway)
+    )
 
 
 @router.get("/me/orders", response_model=Page[OrderRead])

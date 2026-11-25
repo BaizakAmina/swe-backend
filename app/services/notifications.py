@@ -21,7 +21,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -237,16 +237,20 @@ def send_ticket(db: Session, ticket: Ticket) -> None:
 
 
 def send_event_cancelled(db: Session, event: Event) -> None:
-    """One message per buyer who has a paid / registered order for the event."""
+    """One message per buyer who has a paid / registered order for the event.
+
+    By the time this runs the cancellation has already refunded paid orders and cancelled free
+    registrations (BE-24), so cancelled orders that had been completed (``paid_at``) count too;
+    orders that were never paid get nothing.
+    """
+    completed = or_(
+        Order.status.in_([OrderStatus.PAID, OrderStatus.REFUNDED]),
+        (Order.status == OrderStatus.CANCELLED) & Order.paid_at.is_not(None),
+    )
     buyers = db.scalars(
         select(User)
         .where(
-            User.id.in_(
-                select(Order.buyer_user_id).where(
-                    Order.event_id == event.id,
-                    Order.status.in_([OrderStatus.PAID, OrderStatus.REFUNDED]),
-                )
-            )
+            User.id.in_(select(Order.buyer_user_id).where(Order.event_id == event.id, completed))
         )
         .order_by(User.email)
     ).all()

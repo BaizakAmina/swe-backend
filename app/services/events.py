@@ -27,7 +27,7 @@ from app.schemas.events import (
     EventSummary,
     EventUpdate,
 )
-from app.services import audit, calendar, notifications, permissions
+from app.services import audit, calendar, notifications, permissions, refunds
 from app.services.audit import AuditAction
 from app.services.organizers import get_profile
 
@@ -292,7 +292,14 @@ def unpublish(db: Session, user: User, event: Event) -> Event:
 
 
 # Called after an event is cancelled. Refunds/cancellations of orders are added by BE-24.
-on_event_cancelled_hooks: list[Callable[[Session, Event, User], None]] = []
+# Inside the cancel transaction: close the event's orders (refund / cancel / release).
+on_event_cancelled_hooks: list[Callable[[Session, Event, User], None]] = [
+    refunds.on_event_cancelled
+]
+# After the commit: refund emails.
+after_event_cancelled_hooks: list[Callable[[Session, Event], None]] = [
+    refunds.after_event_cancelled
+]
 
 
 def cancel(db: Session, user: User, event: Event, reason: str | None = None) -> Event:
@@ -313,6 +320,8 @@ def cancel(db: Session, user: User, event: Event, reason: str | None = None) -> 
         hook(db, event, user)
     db.commit()
     notifications.send_event_cancelled(db, event)
+    for after in after_event_cancelled_hooks:
+        after(db, event)
     return event
 
 

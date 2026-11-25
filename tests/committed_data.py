@@ -24,6 +24,7 @@ from app.models import (
     PromoCode,
     PromoRedemption,
     PromotionalCampaign,
+    Refund,
     StaffAssignment,
     Ticket,
     TicketType,
@@ -49,6 +50,10 @@ def cleanup(eng: Engine, event_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None
         conn.execute(delete(Notification).where(Notification.user_id.in_(user_ids)))
         conn.execute(delete(CheckInRecord).where(CheckInRecord.event_id == event_id))
         conn.execute(delete(Ticket).where(Ticket.event_id == event_id))
+        payment_ids = select(Payment.id).where(
+            (Payment.order_id.in_(order_ids)) | (Payment.event_id == event_id)
+        )
+        conn.execute(delete(Refund).where(Refund.payment_id.in_(payment_ids)))
         conn.execute(delete(Payment).where(Payment.order_id.in_(order_ids)))
         conn.execute(delete(Payment).where(Payment.event_id == event_id))
         conn.execute(delete(Attendee).where(Attendee.order_item_id.in_(item_ids)))
