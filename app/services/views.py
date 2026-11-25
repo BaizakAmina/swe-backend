@@ -224,7 +224,7 @@ def get_ticket_for_user(db: Session, user: User, ticket_id: uuid.UUID) -> Ticket
     return ticket
 
 
-# ------------------------------------------------------------------ attendee list (organizer + door staff)
+# ------------------------------------------- attendee list (organizer + door staff)
 
 
 def _attendee_stmt(
