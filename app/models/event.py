@@ -38,6 +38,7 @@ class Event(UUIDPkMixin, TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str | None] = mapped_column(String(50), index=True)
     cover_image_key: Mapped[str | None] = mapped_column(String(500))
+    refund_policy: Mapped[str | None] = mapped_column(Text)
     venue_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("venue.id"))
     location_name: Mapped[str | None] = mapped_column(String(200))
     location_address: Mapped[str | None] = mapped_column(String(500))

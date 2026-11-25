@@ -15,6 +15,7 @@ from app.api.v1 import (
     support,
     ticket_types,
     tickets,
+    venues,
 )
 
 api_router = APIRouter()
@@ -26,6 +27,7 @@ api_router.include_router(events.router)
 api_router.include_router(ticket_types.router)
 api_router.include_router(staff.router)
 api_router.include_router(seating.router)
+api_router.include_router(venues.router)
 api_router.include_router(orders.router)
 api_router.include_router(tickets.router)
 api_router.include_router(tickets.checkin_router)

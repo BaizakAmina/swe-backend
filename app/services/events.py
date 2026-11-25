@@ -27,7 +27,7 @@ from app.schemas.events import (
     EventSummary,
     EventUpdate,
 )
-from app.services import audit, calendar, notifications, permissions, refunds
+from app.services import audit, calendar, covers, notifications, permissions, refunds
 from app.services.audit import AuditAction
 from app.services.organizers import get_profile
 
@@ -87,6 +87,7 @@ def to_read(event: Event) -> EventRead:
             "lifecycle": compute_lifecycle(event),
             "is_suspended": event.suspended_at is not None,
             "calendar_links": calendar.links(event),
+            "cover_image_url": covers.url_for(event.cover_image_key),
         }
     )
 
@@ -100,10 +101,19 @@ def _min_price_subquery() -> ColumnElement[int | None]:
     )
 
 
+def _sold_subquery() -> ColumnElement[int]:
+    return (
+        select(func.coalesce(func.sum(TicketType.quantity_sold), 0))
+        .where(TicketType.event_id == Event.id)
+        .correlate(Event)
+        .scalar_subquery()
+    )
+
+
 def _summaries(db: Session, stmt: Select[tuple[Event]], page: Pagination) -> Page[EventSummary]:
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     rows = db.execute(
-        stmt.add_columns(_min_price_subquery().label("min_price"))
+        stmt.add_columns(_min_price_subquery().label("min_price"), _sold_subquery().label("sold"))
         .limit(page.limit)
         .offset(page.offset)
     ).all()
@@ -113,9 +123,11 @@ def _summaries(db: Session, stmt: Select[tuple[Event]], page: Pagination) -> Pag
                 **{c.key: getattr(ev, c.key) for c in Event.__table__.columns},
                 "lifecycle": compute_lifecycle(ev),
                 "min_price_minor": min_price,
+                "sold": sold,
+                "cover_image_url": covers.url_for(ev.cover_image_key),
             }
         )
-        for ev, min_price in rows
+        for ev, min_price, sold in rows
     ]
     return Page(items=items, total=total, limit=page.limit, offset=page.offset)
 
@@ -374,6 +386,7 @@ def list_organizer_events(
     page: Pagination,
     lifecycle: EventLifecycle | None = None,
     event_status: EventStatus | None = None,
+    q: str | None = None,
 ) -> Page[EventSummary]:
     profile = get_profile(db, user)
     if profile is None:
@@ -383,6 +396,9 @@ def list_organizer_events(
         stmt = stmt.where(lifecycle_clause(lifecycle))
     if event_status is not None:
         stmt = stmt.where(Event.status == event_status)
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where(or_(Event.title.ilike(pattern), Event.location_name.ilike(pattern)))
     return _summaries(db, stmt.order_by(Event.starts_at.desc()), page)
 
 

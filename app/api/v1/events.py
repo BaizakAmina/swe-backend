@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import APIRouter, Body, Depends, File, Query, Response, UploadFile, status
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, OptionalUser, OrganizerUser
 from app.models.enums import EventLifecycle, EventStatus
@@ -15,8 +15,8 @@ from app.schemas.events import (
     EventUpdate,
     TimelineEntry,
 )
+from app.services import covers, timeline
 from app.services import events as svc
-from app.services import timeline
 
 router = APIRouter(tags=["events"])
 
@@ -54,6 +54,40 @@ def update_event(
     data: EventUpdate, event: ManagedEvent, user: CurrentUser, db: DbSession
 ) -> EventRead:
     return svc.to_read(svc.update_event(db, user, event, data))
+
+
+@router.post("/events/{event_id}/cover", response_model=EventRead)
+def upload_cover(
+    event: ManagedEvent,
+    user: CurrentUser,
+    db: DbSession,
+    file: Annotated[UploadFile, File(description="JPEG, PNG or WebP, up to 5 MB")],
+) -> EventRead:
+    """Replaces the cover image; the response carries ``cover_image_url`` for display."""
+    data = file.file.read(covers.MAX_BYTES + 1)
+    covers.upload(db, user, event, data)
+    return svc.to_read(svc.load(db, event.id))
+
+
+@router.delete("/events/{event_id}/cover", response_model=EventRead)
+def delete_cover(event: ManagedEvent, user: CurrentUser, db: DbSession) -> EventRead:
+    covers.remove(db, user, event)
+    return svc.to_read(svc.load(db, event.id))
+
+
+@router.get(
+    "/files/covers/{event_id}/{name}",
+    response_class=Response,
+    responses={200: {"content": {"image/jpeg": {}, "image/png": {}, "image/webp": {}}}},
+)
+def cover_file(event_id: str, name: str) -> Response:
+    """Public cover image. Keys are unique per upload, so it is cached for a year."""
+    data, content_type = covers.read(f"covers/{event_id}/{name}")
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @router.post("/events/{event_id}/publish", response_model=EventRead)
@@ -99,8 +133,9 @@ def my_events(
     page: PageParams,
     lifecycle: EventLifecycle | None = None,
     event_status: EventStatus | None = None,
+    q: Annotated[str | None, Query(max_length=200, description="Search in title / venue")] = None,
 ) -> Page[EventSummary]:
-    return svc.list_organizer_events(db, user, page, lifecycle, event_status)
+    return svc.list_organizer_events(db, user, page, lifecycle, event_status, q)
 
 
 @router.get("/events/{event_id}/timeline", response_model=Page[TimelineEntry])
