@@ -192,7 +192,7 @@ def test_request_validation(client: TestClient, shop, db: Session) -> None:
     assert resp.status_code == 404 and error_code(resp) == "ticket_type_not_found"
 
     resp = post_order(client, shop.buyer, order_body(ev_id, (shop.paid, 1), promo_code="DEMO10"))
-    assert resp.status_code == 422 and error_code(resp) == "promo_codes_unavailable"
+    assert resp.status_code == 422 and error_code(resp) == "promo_not_found"
 
     unverified = make_user(db, email_verified_at=None)
     resp = post_order(client, unverified, order_body(ev_id, (shop.paid, 1)))

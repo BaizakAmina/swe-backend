@@ -3,7 +3,6 @@ import uuid
 from fastapi import APIRouter, Response, status
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, OptionalUser
-from app.api.v1._stub import not_implemented
 from app.models.enums import CampaignStatus
 from app.schemas.campaigns import (
     CampaignCreate,
@@ -14,7 +13,7 @@ from app.schemas.campaigns import (
     PromoValidateResponse,
 )
 from app.services import campaigns as svc
-from app.services import qr_image
+from app.services import promo, qr_image
 
 router = APIRouter(tags=["campaigns & promo"])
 
@@ -78,5 +77,10 @@ def campaign_qr(campaign_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Res
 def validate_promo(
     data: PromoValidateRequest, db: DbSession, user: OptionalUser
 ) -> PromoValidateResponse:
-    """Preview of the discount. Nothing is redeemed."""
-    not_implemented("BE-23")
+    """Preview of the discount for these items. Nothing is redeemed; no login needed.
+
+    ``valid: false`` + ``error_code`` (``promo_not_found``, ``promo_wrong_event``,
+    ``promo_disabled``, ``promo_not_started``, ``promo_expired``, ``promo_exhausted``,
+    ``promo_not_applicable``) when the code can't be used.
+    """
+    return promo.preview(db, data)

@@ -12,6 +12,7 @@ from sqlalchemy.engine import Engine
 from app.models import (
     Attendee,
     AuditLog,
+    CampaignTicketType,
     CheckInRecord,
     Event,
     Notification,
@@ -20,6 +21,9 @@ from app.models import (
     OrganizerProfile,
     Payment,
     PayoutAccount,
+    PromoCode,
+    PromoRedemption,
+    PromotionalCampaign,
     StaffAssignment,
     Ticket,
     TicketType,
@@ -50,6 +54,16 @@ def cleanup(eng: Engine, event_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None
         conn.execute(delete(Attendee).where(Attendee.order_item_id.in_(item_ids)))
         conn.execute(delete(OrderItem).where(OrderItem.order_id.in_(order_ids)))
         conn.execute(delete(Order).where(Order.event_id == event_id))
+        campaign_ids = select(PromotionalCampaign.id).where(
+            PromotionalCampaign.event_id == event_id
+        )
+        code_ids = select(PromoCode.id).where(PromoCode.campaign_id.in_(campaign_ids))
+        conn.execute(delete(PromoRedemption).where(PromoRedemption.promo_code_id.in_(code_ids)))
+        conn.execute(delete(PromoCode).where(PromoCode.campaign_id.in_(campaign_ids)))
+        conn.execute(
+            delete(CampaignTicketType).where(CampaignTicketType.campaign_id.in_(campaign_ids))
+        )
+        conn.execute(delete(PromotionalCampaign).where(PromotionalCampaign.event_id == event_id))
         conn.execute(delete(TicketType).where(TicketType.event_id == event_id))
         conn.execute(delete(StaffAssignment).where(StaffAssignment.event_id == event_id))
         conn.execute(delete(Event).where(Event.id == event_id))

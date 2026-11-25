@@ -37,7 +37,7 @@ from app.models.enums import (
     SeatingMode,
 )
 from app.schemas.orders import OrderCreate
-from app.services import audit, notifications, permissions, ticketing
+from app.services import audit, notifications, permissions, promo, ticketing
 from app.services.audit import AuditAction
 from app.services.payments.records import has_succeeded_ticket_payment
 from app.services.ticket_types import is_on_sale, is_sellable
@@ -193,6 +193,7 @@ def _build_order(
     types: dict[uuid.UUID, TicketType],
     currency: str,
     now: datetime,
+    discount: int = 0,
 ) -> Order:
     """Order + one item (with a price snapshot) and one attendee per ticket.
 
@@ -214,7 +215,6 @@ def _build_order(
             items.append(item)
 
     subtotal = sum(i.unit_price_minor for i in items)
-    discount = 0  # promo codes: BE-23
     fees = 0
     return Order(
         buyer_user_id=user.id,
@@ -250,19 +250,29 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
         raise _unprocessable(
             "seated_checkout_unavailable", "Checkout with assigned seats is not available yet"
         )
-    if data.promo_code:
-        raise _unprocessable("promo_codes_unavailable", "Promo codes are not available yet")
     quantities = _requested_quantities(data)
 
     types = _lock_ticket_types(db, quantities)
     currency = _check_lines(event, quantities, types, now)
-    order = _build_order(user, event, data, types, currency, now)
+    quote = None
+    if data.promo_code:  # campaign row locked after the ticket types (see promo)
+        lines = [promo.Line(t, types[t].price_minor, q) for t, q in quantities.items()]
+        quote = promo.quote(db, event.id, data.promo_code, lines, lock=True, now=now)
+    order = _build_order(
+        user, event, data, types, currency, now, quote.discount_minor if quote else 0
+    )
     db.add(order)
     for tt_id, qty in quantities.items():
         types[tt_id].quantity_reserved += qty
     try:
         db.flush()
-    except IntegrityError as exc:  # CHECK inventory_not_oversold — should be unreachable
+        if quote:
+            promo.redeem(db, order, quote, user.id)
+            order.promo_code_id = quote.promo_code.id
+            db.flush()
+    except IntegrityError as exc:  # CHECK constraints — should be unreachable under the locks
+        if "redemptions_within_limit" in str(exc.orig):
+            raise promo.promo_error("promo_exhausted") from exc
         if "inventory_not_oversold" not in str(exc.orig):
             raise
         raise ConflictError("sold_out", "Not enough tickets left") from exc
@@ -275,9 +285,10 @@ def create_order(db: Session, user: User, data: OrderCreate) -> Order:
         f"Order created: {len(order.items)} ticket(s), "
         f"total {notifications.format_money(order.total_minor, order.currency)}",
         items={str(k): v for k, v in quantities.items()},
+        discount_minor=order.discount_minor,
         total_minor=order.total_minor,
     )
-    if order.total_minor == 0:
+    if order.total_minor == 0:  # free tickets or a 100 % promo → free registration path
         mark_paid(db, order, actor_id=user.id)
     db.commit()
 
@@ -366,6 +377,7 @@ def _release_many(
             f"{text}, {sum(quantities.values())} ticket(s) released",
             released={str(k): v for k, v in quantities.items()},
         )
+    promo.release(db, orders)  # campaign rows after the ticket types
     db.flush()
 
 
