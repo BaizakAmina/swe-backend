@@ -123,5 +123,5 @@ def pay_order(
     db.commit()
 
     if payment.status == PaymentStatus.SUCCEEDED:
-        notifications.send_order_confirmation(db, order)
+        orders.notify_paid(db, order)
     return payment

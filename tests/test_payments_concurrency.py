@@ -23,7 +23,6 @@ from app.services.payments import checkout
 from app.services.payments.gateway import SimulatedGateway
 from tests.committed_data import cleanup
 from tests.factories import make_event, make_organizer, make_ticket_type, make_user
-from tests.test_payments import issue_test_tickets
 
 pytestmark = pytest.mark.db
 
@@ -37,10 +36,7 @@ def parallel_engine(engine: Engine) -> Iterator[Engine]:
     eng.dispose()
 
 
-def test_parallel_pay_charges_once(
-    parallel_engine: Engine, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(orders_svc, "on_order_paid_hooks", [issue_test_tickets])
+def test_parallel_pay_charges_once(parallel_engine: Engine) -> None:
     with Session(parallel_engine) as s:
         org = make_organizer(s)
         ev = make_event(s, org, paid_sales_active=True)
