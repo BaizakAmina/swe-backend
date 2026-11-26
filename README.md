@@ -89,7 +89,7 @@ Organizers can create events only after verifying their email and creating an or
 - **Buyer:** `POST /orders` → `POST /orders/{id}/pay` → `GET /me/tickets` · `GET /me/orders` · in-app notifications `GET /me/notifications`
 - **Scanner app:** `GET /me/assigned-events` → `POST /checkin/validate` / `POST /checkin` → `GET /events/{id}/checkin-stats`
 - **Support:** `/support/cases` (+ messages, poll with `?after=`)
-- **Admin:** `/admin/...` — users, events, suspension, payments, activation fee, CSV reports
+- **Admin:** `/admin/...` — users, events, suspension, orders & payments (`q`, status, `date_from`/`date_to`), reported events, disputes, promo activity, platform settings, CSV reports (with dates)
 
 ---
 

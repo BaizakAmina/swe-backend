@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.db import Base, SessionLocal
 from app.core.security import hash_password
 from app.models import (
@@ -41,6 +40,7 @@ from app.models.enums import (
     TicketKind,
     VerificationStatus,
 )
+from app.services import platform_settings
 
 DEMO_PASSWORD = "demo12345"
 
@@ -92,7 +92,7 @@ def _organizer(db: Session, user: User, name: str, verified: bool) -> OrganizerP
                 VerificationStatus.VERIFIED if verified else VerificationStatus.UNVERIFIED
             ),
             # the demo verified organizer is fully ready for paid sales
-            paid_terms_version=get_settings().paid_terms_version if verified else None,
+            paid_terms_version=platform_settings.paid_terms_version(db) if verified else None,
             paid_terms_accepted_at=datetime.now(UTC) if verified else None,
         )
         db.add(profile)

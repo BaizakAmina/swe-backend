@@ -8,9 +8,11 @@
 - Payments are simulated: payment/refund objects always expose ``is_simulated: true``.
 """
 
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Generic, TypeVar
 
 from fastapi import Query
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
@@ -52,3 +54,47 @@ class ErrorBody(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorBody
+
+
+class Period(BaseModel):
+    """``[start, end)`` in UTC; either side open when ``None``."""
+
+    start: datetime | None = None
+    end: datetime | None = None
+
+
+def _parse_bound(name: str, raw: str | None, *, end: bool) -> datetime | None:
+    if raw is None or not raw.strip():
+        return None
+    raw = raw.strip()
+    try:
+        if len(raw) == 10:  # a calendar day: from its start / through its end
+            day = date.fromisoformat(raw)
+            return datetime.combine(day + timedelta(days=1) if end else day, time(), UTC)
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("query", name),
+                    "msg": "expected YYYY-MM-DD or an ISO 8601 datetime",
+                    "input": raw,
+                }
+            ]
+        ) from exc
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def period(
+    date_from: Annotated[
+        str | None, Query(description="From this day (YYYY-MM-DD) or moment (ISO 8601)")
+    ] = None,
+    date_to: Annotated[
+        str | None, Query(description="Through this day (YYYY-MM-DD) or until this moment")
+    ] = None,
+) -> Period:
+    return Period(
+        start=_parse_bound("date_from", date_from, end=False),
+        end=_parse_bound("date_to", date_to, end=True),
+    )

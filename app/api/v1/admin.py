@@ -1,24 +1,37 @@
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.api.deps import DbSession, PlatformAdmin
-from app.models.enums import EventStatus, PaymentPurpose, Role, UserStatus
+from app.models.enums import (
+    EventStatus,
+    OrderStatus,
+    PaymentPurpose,
+    PaymentStatus,
+    Role,
+    SupportStatus,
+    UserStatus,
+)
 from app.schemas.admin import (
     AdminEventRead,
     AdminUserRead,
     PlatformSettingsRead,
     PlatformSettingsUpdate,
+    PromoActivityRead,
+    ReportedEventRead,
     SuspendRequest,
 )
-from app.schemas.common import Page, Pagination, pagination
+from app.schemas.common import Page, Pagination, Period, pagination, period
 from app.schemas.orders import OrderRead, PaymentRead
+from app.schemas.support import SupportCaseRead
 from app.services import admin as svc
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 PageParams = Annotated[Pagination, Depends(pagination)]
+PeriodParams = Annotated[Period, Depends(period)]
+SearchParam = Annotated[str | None, Query(max_length=200)]
 
 
 @router.get("/users", response_model=Page[AdminUserRead])
@@ -81,9 +94,17 @@ def unsuspend_event(event_id: uuid.UUID, admin: PlatformAdmin, db: DbSession) ->
 
 @router.get("/orders", response_model=Page[OrderRead])
 def list_orders(
-    admin: PlatformAdmin, db: DbSession, page: PageParams, event_id: uuid.UUID | None = None
+    admin: PlatformAdmin,
+    db: DbSession,
+    page: PageParams,
+    period: PeriodParams,
+    event_id: uuid.UUID | None = None,
+    q: SearchParam = None,
+    order_status: OrderStatus | None = None,
 ) -> Page[OrderRead]:
-    return svc.list_orders(db, page, event_id)
+    """``q``: order id, buyer email or name, event title, promo code. Dates filter
+    ``created_at``."""
+    return svc.list_orders(db, page, event_id, q, order_status, period)
 
 
 @router.get("/payments", response_model=Page[PaymentRead])
@@ -91,10 +112,55 @@ def list_payments(
     admin: PlatformAdmin,
     db: DbSession,
     page: PageParams,
+    period: PeriodParams,
     purpose: PaymentPurpose | None = None,
+    q: SearchParam = None,
+    payment_status: PaymentStatus | None = None,
 ) -> Page[PaymentRead]:
-    """All payments are simulated (``is_simulated: true``)."""
-    return svc.list_payments(db, page, purpose)
+    """All payments are simulated (``is_simulated: true``). ``q``: payment or order id,
+    provider reference, payer email or name, event title. Dates filter ``created_at``."""
+    return svc.list_payments(db, page, purpose, q, payment_status, period)
+
+
+@router.get("/reported-events", response_model=Page[ReportedEventRead])
+def reported_events(
+    admin: PlatformAdmin,
+    db: DbSession,
+    page: PageParams,
+    period: PeriodParams,
+    q: SearchParam = None,
+    only_open: bool = True,
+) -> Page[ReportedEventRead]:
+    """Events with support cases (most open cases first). ``only_open=false`` also lists events
+    whose cases are all resolved. Dates filter when the cases were opened."""
+    return svc.reported_events(db, page, q, only_open, period)
+
+
+@router.get("/disputes", response_model=Page[SupportCaseRead])
+def disputes(
+    admin: PlatformAdmin,
+    db: DbSession,
+    page: PageParams,
+    period: PeriodParams,
+    q: SearchParam = None,
+    case_status: SupportStatus | None = None,
+) -> Page[SupportCaseRead]:
+    """Payment and refund support cases. Reply / resolve them via ``/support/cases/{id}``."""
+    return svc.disputes(db, page, q, case_status, period)
+
+
+@router.get("/promo-activity", response_model=Page[PromoActivityRead])
+def promo_activity(
+    admin: PlatformAdmin,
+    db: DbSession,
+    page: PageParams,
+    period: PeriodParams,
+    q: SearchParam = None,
+    event_id: uuid.UUID | None = None,
+) -> Page[PromoActivityRead]:
+    """Promo-code uses on orders, newest first. ``q``: code, campaign, event title, buyer
+    email."""
+    return svc.promo_activity(db, page, q, event_id, period)
 
 
 @router.get("/activation-records", response_model=Page[PaymentRead])
@@ -112,18 +178,24 @@ def get_settings(admin: PlatformAdmin, db: DbSession) -> PlatformSettingsRead:
 def update_settings(
     data: PlatformSettingsUpdate, admin: PlatformAdmin, db: DbSession
 ) -> PlatformSettingsRead:
-    """Activation fee (KZT minor units) used for new paid-sales activations."""
-    return svc.update_settings(db, admin, data.activation_fee_minor)
+    """Only the fields sent change; each change is audited. ``activation_fee_minor`` (KZT minor
+    units), reservation and seat-hold times (minutes), seat-hold limit per user, and the current
+    paid-event terms version (a new version asks organizers to accept again)."""
+    return svc.update_settings(db, admin, data)
 
 
 @router.get(
     "/reports/{report}.csv", response_model=None, responses={200: {"content": {"text/csv": {}}}}
 )
 def report_csv(
-    report: Literal["users", "events", "orders", "payments"], admin: PlatformAdmin, db: DbSession
+    report: Literal["users", "events", "orders", "payments"],
+    admin: PlatformAdmin,
+    db: DbSession,
+    period: PeriodParams,
 ) -> Response:
+    """Dates filter ``created_at`` (``starts_at`` for events)."""
     return Response(
-        svc.report_csv(db, report),
+        svc.report_csv(db, report, period),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{report}.csv"'},
     )

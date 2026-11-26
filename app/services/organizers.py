@@ -19,7 +19,7 @@ from app.schemas.organizers import (
     PayoutAccountCreate,
     PayoutAccountUpdate,
 )
-from app.services import audit
+from app.services import audit, platform_settings
 from app.services.audit import AuditAction
 
 # Looks like a card number or an IBAN → we never store real bank data.
@@ -172,13 +172,13 @@ def get_activation_checklist(db: Session, profile: OrganizerProfile) -> Activati
             )
         )
     )
-    s = get_settings()
+    version = platform_settings.paid_terms_version(db)
     return ActivationChecklist(
         profile_complete=_profile_complete(profile),
         verified=profile.verification_status == VerificationStatus.VERIFIED,
         payout_account_connected=bool(connected),
-        terms_accepted=profile.paid_terms_version == s.paid_terms_version,
-        terms_version=s.paid_terms_version,
+        terms_accepted=profile.paid_terms_version == version,
+        terms_version=version,
         terms_url=paid_terms_url(),
     )
 
@@ -191,7 +191,7 @@ def paid_terms_url() -> str:
 def accept_paid_terms(db: Session, user: User, version: str | None) -> ActivationChecklist:
     """Records that the organizer accepted the current paid-event terms (idempotent)."""
     profile = require_profile(db, user)
-    current = get_settings().paid_terms_version
+    current = platform_settings.paid_terms_version(db)
     if version is not None and version != current:
         raise AppError(
             "terms_version_outdated",
