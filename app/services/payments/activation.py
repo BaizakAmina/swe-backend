@@ -29,6 +29,7 @@ CHECKLIST_STEPS = {
     "profile_complete": "Complete the organizer profile",
     "verified": "Get the organizer profile verified",
     "payout_account_connected": "Connect a payout account",
+    "terms_accepted": "Accept the paid-event terms",
 }
 
 
@@ -36,7 +37,10 @@ def _checklist(db: Session, event: Event) -> ActivationChecklist:
     profile = db.get(OrganizerProfile, event.organizer_id)
     if profile is None:  # FK guarantees it; keeps mypy and odd data honest
         return ActivationChecklist(
-            profile_complete=False, verified=False, payout_account_connected=False
+            profile_complete=False,
+            verified=False,
+            payout_account_connected=False,
+            terms_url=organizers.paid_terms_url(),
         )
     return organizers.get_activation_checklist(db, profile)
 
@@ -60,6 +64,9 @@ def get_status(db: Session, event: Event) -> ActivationStatusRead:
         profile_complete=checklist.profile_complete,
         verified=checklist.verified,
         payout_account_connected=checklist.payout_account_connected,
+        terms_accepted=checklist.terms_accepted,
+        terms_version=checklist.terms_version,
+        terms_url=checklist.terms_url,
         activation_payment=PaymentRead.model_validate(payment) if payment else None,
     )
 

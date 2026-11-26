@@ -106,4 +106,7 @@ class ActivationStatusRead(BaseModel):
     profile_complete: bool
     verified: bool
     payout_account_connected: bool
+    terms_accepted: bool
+    terms_version: str
+    terms_url: str
     activation_payment: PaymentRead | None

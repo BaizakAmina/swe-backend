@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import (
     CheckInRecord,
     Event,
@@ -299,6 +300,7 @@ def test_activation_fee_is_charged_once(world: Committed, parallel_engine: Engin
         organizer={
             "contact_email": "org@example.com",
             "verification_status": VerificationStatus.VERIFIED,
+            "paid_terms_version": get_settings().paid_terms_version,
         },
     )
     profile_id = ev.organizer_id

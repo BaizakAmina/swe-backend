@@ -1,6 +1,7 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Body, status
 
 from app.api.deps import DbSession, OrganizerUser
 from app.schemas.organizers import (
@@ -8,6 +9,7 @@ from app.schemas.organizers import (
     OrganizerProfileCreate,
     OrganizerProfileRead,
     OrganizerProfileUpdate,
+    PaidTermsAccept,
     PayoutAccountCreate,
     PayoutAccountRead,
     PayoutAccountUpdate,
@@ -47,6 +49,17 @@ def verify_my_profile(user: OrganizerUser, db: DbSession) -> OrganizerProfileRea
 @router.get("/organizers/me/activation-checklist", response_model=ActivationChecklist)
 def activation_checklist(user: OrganizerUser, db: DbSession) -> ActivationChecklist:
     return svc.get_activation_checklist(db, svc.require_profile(db, user))
+
+
+@router.post("/organizers/me/paid-terms/accept", response_model=ActivationChecklist)
+def accept_paid_terms(
+    user: OrganizerUser,
+    db: DbSession,
+    data: Annotated[PaidTermsAccept | None, Body()] = None,
+) -> ActivationChecklist:
+    """Accept the paid-event terms (``terms_url`` in the checklist). Needed once per terms
+    version before paid sales can be activated; returns the updated checklist."""
+    return svc.accept_paid_terms(db, user, data.version if data else None)
 
 
 @router.get("/organizers/me/payout-accounts", response_model=list[PayoutAccountRead])

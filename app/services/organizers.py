@@ -2,11 +2,13 @@
 
 import re
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import status
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.models import OrganizerProfile, PayoutAccount, User
 from app.models.enums import PayoutAccountStatus, VerificationStatus
@@ -170,8 +172,44 @@ def get_activation_checklist(db: Session, profile: OrganizerProfile) -> Activati
             )
         )
     )
+    s = get_settings()
     return ActivationChecklist(
         profile_complete=_profile_complete(profile),
         verified=profile.verification_status == VerificationStatus.VERIFIED,
         payout_account_connected=bool(connected),
+        terms_accepted=profile.paid_terms_version == s.paid_terms_version,
+        terms_version=s.paid_terms_version,
+        terms_url=paid_terms_url(),
     )
+
+
+def paid_terms_url() -> str:
+    s = get_settings()
+    return f"{s.public_web_url.rstrip('/')}{s.paid_terms_path}"
+
+
+def accept_paid_terms(db: Session, user: User, version: str | None) -> ActivationChecklist:
+    """Records that the organizer accepted the current paid-event terms (idempotent)."""
+    profile = require_profile(db, user)
+    current = get_settings().paid_terms_version
+    if version is not None and version != current:
+        raise AppError(
+            "terms_version_outdated",
+            "The terms have changed; please review the current version",
+            status.HTTP_409_CONFLICT,
+            {"current_version": current},
+        )
+    if profile.paid_terms_version != current:
+        profile.paid_terms_version = current
+        profile.paid_terms_accepted_at = datetime.now(UTC)
+        audit.log(
+            db,
+            actor_id=user.id,
+            action=AuditAction.ORGANIZER_TERMS_ACCEPTED,
+            entity_type="organizer_profile",
+            entity_id=profile.id,
+            description=f"Accepted the paid-event terms (version {current})",
+            metadata={"version": current},
+        )
+        db.commit()
+    return get_activation_checklist(db, profile)

@@ -21,9 +21,12 @@ API = "/api/v1"
 
 
 def ready_organizer(db: Session) -> OrganizerProfile:
-    """Profile complete, verified, payout account connected."""
+    """Profile complete, verified, payout account connected, terms accepted."""
     org = make_organizer(
-        db, contact_email="org@example.com", verification_status=VerificationStatus.VERIFIED
+        db,
+        contact_email="org@example.com",
+        verification_status=VerificationStatus.VERIFIED,
+        paid_terms_version=get_settings().paid_terms_version,
     )
     db.add(PayoutAccount(organizer_id=org.id, provider_ref="sandbox_acct_1"))
     db.flush()
@@ -63,6 +66,9 @@ def test_status_shows_checklist_and_fee(client: TestClient, ready, db: Session) 
         "profile_complete": True,
         "verified": True,
         "payout_account_connected": True,
+        "terms_accepted": True,
+        "terms_version": get_settings().paid_terms_version,
+        "terms_url": "http://localhost:3000/terms/paid-events",
         "activation_payment": None,
     }
 
@@ -80,15 +86,25 @@ def test_incomplete_checklist_lists_missing_steps(client: TestClient, db: Sessio
         "profile_complete",
         "verified",
         "payout_account_connected",
+        "terms_accepted",
     ]
-    assert "payout account" in error["message"]
+    assert "payout account" in error["message"] and "terms" in error["message"]
 
     # a verified, complete profile still needs the payout account
     org.contact_email = "org@example.com"
     org.verification_status = VerificationStatus.VERIFIED
     db.flush()
     resp = activate(client, owner, ev.id)
-    assert resp.json()["error"]["details"]["missing"] == ["payout_account_connected"]
+    assert resp.json()["error"]["details"]["missing"] == [
+        "payout_account_connected",
+        "terms_accepted",
+    ]
+
+    # … and the paid-event terms
+    db.add(PayoutAccount(organizer_id=org.id, provider_ref="sandbox_acct_9"))
+    db.flush()
+    resp = activate(client, owner, ev.id)
+    assert resp.json()["error"]["details"]["missing"] == ["terms_accepted"]
 
     db.refresh(ev)
     assert ev.paid_sales_active is False
@@ -188,3 +204,68 @@ def test_activation_fee_visible_in_admin(client: TestClient, ready, db: Session)
     mine = [r for r in records["items"] if r["event_id"] == str(ready.event.id)]
     assert len(mine) == 1
     assert mine[0]["purpose"] == PaymentPurpose.ACTIVATION_FEE and mine[0]["is_simulated"] is True
+
+
+# ------------------------------------------------------------------ paid-event terms
+
+
+def test_accept_terms_completes_checklist_and_unlocks_activation(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org = ready_organizer(db)
+    org.paid_terms_version = None
+    db.flush()
+    owner = db.get(User, org.user_id)
+    assert owner
+    ev = make_event(db, org, paid_sales_active=False)
+    h = auth_headers(owner)
+
+    status = client.get(f"{API}/events/{ev.id}/activation", headers=h).json()
+    assert status["terms_accepted"] is False
+    assert status["terms_url"].endswith("/terms/paid-events")
+    assert activate(client, owner, ev.id).json()["error"]["details"]["missing"] == [
+        "terms_accepted"
+    ]
+
+    version = get_settings().paid_terms_version
+    stale = client.post(
+        f"{API}/organizers/me/paid-terms/accept", json={"version": "1999-01"}, headers=h
+    )
+    assert stale.status_code == 409 and error_code(stale) == "terms_version_outdated"
+    assert stale.json()["error"]["details"] == {"current_version": version}
+
+    for _ in range(2):  # idempotent
+        resp = client.post(
+            f"{API}/organizers/me/paid-terms/accept", json={"version": version}, headers=h
+        )
+        assert resp.status_code == 200 and resp.json()["terms_accepted"] is True
+    db.refresh(org)
+    assert org.paid_terms_version == version and org.paid_terms_accepted_at is not None
+    logs = db.scalars(
+        select(AuditLog).where(
+            AuditLog.entity_id == org.id, AuditLog.action_type == "organizer.terms_accepted"
+        )
+    ).all()
+    assert len(logs) == 1 and logs[0].metadata_ == {"version": version}
+
+    assert activate(client, owner, ev.id).status_code == 200
+
+    # new terms version → must accept again before the next activation
+    monkeypatch.setattr(get_settings(), "paid_terms_version", "2027-01")
+    other = make_event(db, org, paid_sales_active=False)
+    assert (
+        client.get(f"{API}/organizers/me/activation-checklist", headers=h).json()["terms_accepted"]
+        is False
+    )
+    assert error_code(activate(client, owner, other.id)) == "activation_checklist_incomplete"
+    assert client.post(f"{API}/organizers/me/paid-terms/accept", headers=h).status_code == 200
+    assert activate(client, owner, other.id).status_code == 200
+
+
+def test_accept_terms_needs_organizer_profile(client: TestClient, db: Session) -> None:
+    user = make_user(db, roles=(Role.ORGANIZER,))
+    resp = client.post(f"{API}/organizers/me/paid-terms/accept", headers=auth_headers(user))
+    assert resp.status_code == 404
+    attendee = make_user(db)
+    resp = client.post(f"{API}/organizers/me/paid-terms/accept", headers=auth_headers(attendee))
+    assert resp.status_code == 403

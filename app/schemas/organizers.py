@@ -51,7 +51,21 @@ class ActivationChecklist(BaseModel):
     profile_complete: bool
     verified: bool
     payout_account_connected: bool
+    terms_accepted: bool = False
+    terms_version: str = ""
+    terms_url: str = ""
 
     @property
     def ready(self) -> bool:
-        return self.profile_complete and self.verified and self.payout_account_connected
+        return (
+            self.profile_complete
+            and self.verified
+            and self.payout_account_connected
+            and self.terms_accepted
+        )
+
+
+class PaidTermsAccept(BaseModel):
+    """``version`` the user was shown; rejected if the terms changed meanwhile."""
+
+    version: str | None = Field(default=None, max_length=32)

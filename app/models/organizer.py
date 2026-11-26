@@ -1,10 +1,11 @@
 import uuid
+from datetime import datetime
 
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import TimestampMixin, UUIDPkMixin, str_enum
+from app.models.base import TZ, TimestampMixin, UUIDPkMixin, str_enum
 from app.models.enums import PayoutAccountStatus, StaffRole, VerificationStatus
 from app.models.user import User
 
@@ -25,6 +26,9 @@ class OrganizerProfile(UUIDPkMixin, TimestampMixin, Base):
         default=VerificationStatus.UNVERIFIED,
         server_default="unverified",
     )
+    # Paid-event terms (SRS §3.2): which version the organizer accepted, and when.
+    paid_terms_version: Mapped[str | None] = mapped_column(String(32))
+    paid_terms_accepted_at: Mapped[datetime | None] = mapped_column(TZ)
 
     user: Mapped[User] = relationship()
     payout_accounts: Mapped[list["PayoutAccount"]] = relationship(back_populates="organizer")

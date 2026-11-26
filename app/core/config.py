@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # s3 → any S3-compatible service; memory → in-process dict (tests)
     storage_backend: str = "s3"
 
+    # Paid-event terms organizers accept before paid sales; bump the version to ask again.
+    paid_terms_version: str = "2026-11"
+    paid_terms_path: str = "/terms/paid-events"
+
     # Payments (simulated)
     activation_fee_minor: int = 500_000  # 5 000 KZT
     # PaymentGateway implementation (app/services/payments/gateway.py); only "simulated" for now.
