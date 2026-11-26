@@ -14,8 +14,8 @@ from typing import Any
 from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.config import get_settings
 from app.core.errors import ForbiddenError, NotFoundError
+from app.core.urls import public_api_url
 from app.models import Attendee, Event, Order, OrderItem, PromoCode, Ticket, TicketType, User
 from app.models.enums import OrderStatus, TicketStatus
 from app.schemas.common import Page, Pagination
@@ -143,7 +143,6 @@ def tickets_to_read(db: Session, tickets: Sequence[Ticket]) -> list[TicketRead]:
         e.id: e
         for e in db.scalars(select(Event).where(Event.id.in_({t.event_id for t in tickets})))
     }
-    base = get_settings().api_base_url.rstrip("/")
     out = []
     for t in tickets:
         ev = events[t.event_id]
@@ -172,7 +171,7 @@ def tickets_to_read(db: Session, tickets: Sequence[Ticket]) -> list[TicketRead]:
                     location_name=ev.location_name,
                     location_address=ev.location_address,
                 ),
-                pdf_url=f"{base}/api/v1/tickets/{t.id}/pdf",
+                pdf_url=public_api_url(f"/tickets/{t.id}/pdf"),
             )
         )
     return out

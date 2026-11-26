@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     debug: bool = False
     api_prefix: str = "/api/v1"
     public_web_url: str = "http://localhost:3000"
+    # Mobile app deep links in emails (biletflow://app/verify-email?token=…); empty = none
+    app_link_base: str = "biletflow://app"
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
     # Database

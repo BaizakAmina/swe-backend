@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, File, Query, Response, UploadFile,
 
 from app.api.deps import CurrentUser, DbSession, ManagedEvent, OptionalUser, OrganizerUser
 from app.models.enums import EventLifecycle, EventStatus
-from app.schemas.common import Page, Pagination, pagination
+from app.schemas.common import Page, Pagination, pagination, wide_pagination
 from app.schemas.events import (
     EventCancelRequest,
     EventCreate,
@@ -142,7 +142,7 @@ def my_events(
 def event_timeline(
     event: ManagedEvent,
     db: DbSession,
-    page: PageParams,
+    page: Annotated[Pagination, Depends(wide_pagination)],
     action_type: str | None = None,
     actor_id: uuid.UUID | None = None,
     date_from: datetime | None = None,
