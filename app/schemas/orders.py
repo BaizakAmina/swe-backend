@@ -50,6 +50,8 @@ class OrderRead(ORMModel):
     event_id: uuid.UUID
     event_title: str
     buyer_user_id: uuid.UUID
+    buyer_name: str | None = None
+    buyer_email: str | None = None
     status: OrderStatus
     currency: str
     subtotal_minor: int

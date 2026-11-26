@@ -138,3 +138,26 @@ def test_organizer_case_requires_organizer_role(client: TestClient, world, db: S
     assert resp.status_code == 403
     resp = open_case(client, world["owner_h"], kind="organizer", category="payment")
     assert resp.status_code == 201
+
+
+def test_case_list_shows_requester_and_event_title(client: TestClient, world, outbox) -> None:
+    open_case(client, world["buyer_h"], ticket_id=str(world["ticket"].id))
+    general = open_case(client, world["buyer_h"], category="account", subject="Login")
+    assert general.status_code == 201 and general.json()["event_title"] is None
+
+    detail = open_case(client, world["buyer_h"], ticket_id=str(world["ticket"].id)).json()
+    assert (detail["requester_name"], detail["requester_email"]) == ("Buyer", "buyer@example.com")
+    assert detail["event_title"] == "Jazz"
+
+    cases = client.get(f"{API}/cases", headers=world["owner_h"]).json()["items"]
+    assert cases and all(c["requester_name"] == "Buyer" for c in cases)
+    assert {c["event_title"] for c in cases} == {"Jazz"}  # the organizer sees only event cases
+
+    mine = client.get(f"{API}/cases", headers=world["buyer_h"]).json()["items"]
+    assert sorted(str(c["event_title"]) for c in mine) == ["Jazz", "Jazz", "None"]
+    assert all(c["requester_email"] == "buyer@example.com" for c in mine)
+
+    updated = client.patch(
+        f"{API}/cases/{detail['id']}", json={"status": "resolved"}, headers=world["buyer_h"]
+    ).json()
+    assert (updated["requester_name"], updated["event_title"]) == ("Buyer", "Jazz")

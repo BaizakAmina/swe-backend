@@ -37,11 +37,14 @@ class SupportMessageRead(ORMModel):
 class SupportCaseRead(ORMModel):
     id: uuid.UUID
     opened_by_user_id: uuid.UUID
+    requester_name: str | None = None
+    requester_email: str | None = None
     kind: SupportCaseKind
     category: SupportCategory
     subject: str
     status: SupportStatus
     event_id: uuid.UUID | None
+    event_title: str | None = None
     order_id: uuid.UUID | None
     ticket_id: uuid.UUID | None
     assigned_to_user_id: uuid.UUID | None

@@ -10,6 +10,7 @@ Clients poll ``GET /support/cases/{id}/messages?after=…`` — no WebSockets.
 """
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from fastapi import status
@@ -122,10 +123,48 @@ def messages_to_read(db: Session, msgs: list[SupportMessage]) -> list[SupportMes
     ]
 
 
+def cases_to_read(db: Session, cases: Sequence[SupportCase]) -> list[SupportCaseRead]:
+    """Cases with requester name / email and event title — two batched lookups."""
+    users = {
+        row[0]: (row[1], row[2])
+        for row in db.execute(
+            select(User.id, User.full_name, User.email).where(
+                User.id.in_({c.opened_by_user_id for c in cases})
+            )
+        )
+    }
+    event_ids = {c.event_id for c in cases if c.event_id}
+    titles = (
+        {
+            row[0]: row[1]
+            for row in db.execute(select(Event.id, Event.title).where(Event.id.in_(event_ids)))
+        }
+        if event_ids
+        else {}
+    )
+    result = []
+    for c in cases:
+        name, email = users.get(c.opened_by_user_id, (None, None))
+        result.append(
+            SupportCaseRead.model_validate(c).model_copy(
+                update={
+                    "requester_name": name,
+                    "requester_email": email,
+                    "event_title": titles.get(c.event_id) if c.event_id else None,
+                }
+            )
+        )
+    return result
+
+
+def case_to_read(db: Session, case: SupportCase) -> SupportCaseRead:
+    return cases_to_read(db, [case])[0]
+
+
 def to_detail(db: Session, case: SupportCase) -> SupportCaseDetail:
     return SupportCaseDetail.model_validate(
         {
-            **SupportCaseRead.model_validate(case).model_dump(),
+            **case_to_read(db, case).model_dump(),
             "messages": messages_to_read(db, sorted(case.messages, key=lambda m: m.sent_at)),
         }
     )
@@ -220,7 +259,7 @@ def list_cases(
         stmt.order_by(SupportCase.updated_at.desc()).limit(page.limit).offset(page.offset)
     ).all()
     return Page(
-        items=[SupportCaseRead.model_validate(c) for c in rows],
+        items=cases_to_read(db, rows),
         total=total,
         limit=page.limit,
         offset=page.offset,
@@ -269,7 +308,7 @@ def update_case(
             metadata={k: str(v) for k, v in changes.items()},
         )
         db.commit()
-    return SupportCaseRead.model_validate(case)
+    return case_to_read(db, case)
 
 
 def list_messages(

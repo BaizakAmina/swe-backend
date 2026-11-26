@@ -399,3 +399,20 @@ def test_mark_paid_and_release_helpers(client: TestClient, shop, db: Session, mo
     db.commit()
     db.refresh(shop.paid)
     assert (shop.paid.quantity_reserved, shop.paid.quantity_sold) == (0, 2)
+
+
+def test_order_read_includes_buyer_name_and_email(client: TestClient, shop, db: Session) -> None:
+    order = post_order(client, shop.buyer, order_body(shop.event.id, (shop.paid, 1))).json()
+    assert (order["buyer_name"], order["buyer_email"]) == ("Buyer", shop.buyer.email)
+
+    other = make_user(db, full_name="Second Buyer")
+    post_order(client, other, order_body(shop.event.id, (shop.paid, 1)))
+    listed = client.get(
+        f"{API}/events/{shop.event.id}/orders", headers=auth_headers(shop.owner)
+    ).json()["items"]
+    assert {(o["buyer_name"], o["buyer_email"]) for o in listed} == {
+        ("Buyer", shop.buyer.email),
+        ("Second Buyer", other.email),
+    }
+    mine = client.get(f"{API}/me/orders", headers=auth_headers(other)).json()["items"]
+    assert [o["buyer_name"] for o in mine] == ["Second Buyer"]

@@ -46,6 +46,10 @@ def orders_to_read(db: Session, orders: Sequence[Order]) -> list[OrderRead]:
     names = _type_names(db, type_ids)
     event_ids = {o.event_id for o in orders}
     titles = _id_map(db, select(Event.id, Event.title).where(Event.id.in_(event_ids)))
+    buyers = {
+        u.id: u
+        for u in db.scalars(select(User).where(User.id.in_({o.buyer_user_id for o in orders})))
+    }
     promo_ids = {o.promo_code_id for o in orders if o.promo_code_id}
     codes = (
         _id_map(db, select(PromoCode.id, PromoCode.code).where(PromoCode.id.in_(promo_ids)))
@@ -75,6 +79,8 @@ def orders_to_read(db: Session, orders: Sequence[Order]) -> list[OrderRead]:
                 event_id=o.event_id,
                 event_title=titles.get(o.event_id, ""),
                 buyer_user_id=o.buyer_user_id,
+                buyer_name=buyers[o.buyer_user_id].full_name if o.buyer_user_id in buyers else None,
+                buyer_email=buyers[o.buyer_user_id].email if o.buyer_user_id in buyers else None,
                 status=o.status,
                 currency=o.currency,
                 subtotal_minor=o.subtotal_minor,
