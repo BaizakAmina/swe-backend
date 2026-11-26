@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, PromotionalCampaign, User
+from app.models import AuditLog, Order, PromotionalCampaign, User
 from app.models.enums import EventStatus
 from app.services import campaigns as svc
 from tests.factories import auth_headers, make_event, make_organizer, make_ticket_type, make_user
@@ -106,3 +106,98 @@ def test_campaign_qr_is_distinguishable_from_ticket_qr() -> None:
     assert svc.is_campaign_qr(token)
     assert svc.is_campaign_qr(f"https://biletflow.kz/events/x?c={token}")
     assert not svc.is_campaign_qr("T1.abc.def")
+
+
+# ------------------------------------------------------------------ editing after creation
+
+
+def _order(client: TestClient, db: Session, event, tt, code: str):
+    from tests.test_orders import order_body, post_order
+
+    return post_order(client, make_user(db), order_body(event.id, (tt, 1), promo_code=code))
+
+
+def test_edit_discount_applies_to_new_orders_only(client: TestClient, setup, db: Session) -> None:
+    event, standard, h = setup
+    event.paid_sales_active = True
+    standard.price_minor = 1_000_000
+    db.flush()
+    c = create(client, event, h, code="EDITME").json()
+    first = _order(client, db, event, standard, "EDITME").json()
+    assert first["discount_minor"] == 100_000
+
+    resp = client.patch(
+        f"{API}/campaigns/{c['id']}",
+        json={"discount_type": "fixed", "discount_value": 250_000},
+        headers=h,
+    )
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["discount_type"], resp.json()["discount_value"]) == ("fixed", 250_000)
+    assert _order(client, db, event, standard, "EDITME").json()["discount_minor"] == 250_000
+    placed = db.get(Order, first["id"])
+    assert placed is not None
+    db.refresh(placed)
+    assert placed.discount_minor == 100_000  # placed orders keep their discount
+
+    log = db.scalars(
+        select(AuditLog).where(
+            AuditLog.entity_id == c["id"], AuditLog.action_type == "campaign.updated"
+        )
+    ).one()
+    assert log.metadata_["discount_type"] == {"old": "percent", "new": "fixed"}
+    assert log.metadata_["discount_value"] == {"old": "10", "new": "250000"}
+
+
+def test_edit_discount_validation(client: TestClient, setup) -> None:
+    event, _, h = setup
+    c = create(client, event, h, discount_type="fixed", discount_value=500_000).json()
+    url = f"{API}/campaigns/{c['id']}"
+    resp = client.patch(url, json={"discount_type": "percent"}, headers=h)  # 500 000 %
+    assert resp.status_code == 422 and resp.json()["error"]["code"] == "invalid_discount"
+    assert client.patch(url, json={"discount_value": 0}, headers=h).status_code == 422
+    resp = client.patch(url, json={"discount_value": None}, headers=h)
+    assert resp.status_code == 422 and resp.json()["error"]["code"] == "invalid_value"
+    ok = client.patch(url, json={"discount_type": "percent", "discount_value": 30}, headers=h)
+    assert ok.status_code == 200 and ok.json()["discount_value"] == 30
+
+
+def test_rename_code_keeps_qr_link(client: TestClient, setup, db: Session) -> None:
+    event, standard, h = setup
+    event.paid_sales_active = True
+    db.flush()
+    c = create(client, event, h, code="OLDCODE").json()
+    create(client, event, h, code="TAKEN1")
+
+    url = f"{API}/campaigns/{c['id']}"
+    taken = client.patch(url, json={"code": "TAKEN1"}, headers=h)
+    assert taken.status_code == 409 and taken.json()["error"]["code"] == "promo_code_taken"
+    assert client.patch(url, json={"code": "bad code"}, headers=h).status_code == 422
+
+    resp = client.patch(url, json={"code": "NEWCODE"}, headers=h)
+    assert resp.status_code == 200
+    assert resp.json()["code"] == "NEWCODE"
+    assert resp.json()["qr_link"] == c["qr_link"]  # printed posters keep working
+    token = c["qr_link"].split("?c=")[1]
+    resolved = client.get(f"{API}/campaigns/resolve", params={"token": token}).json()
+    assert resolved["code"] == "NEWCODE"
+
+    old = _order(client, db, event, standard, "OLDCODE")
+    assert old.status_code == 422 and old.json()["error"]["code"] == "promo_not_found"
+    assert _order(client, db, event, standard, "NEWCODE").status_code == 201
+    # renaming to its own code is a no-op
+    assert client.patch(url, json={"code": "NEWCODE"}, headers=h).status_code == 200
+
+
+def test_edit_ticket_types_after_creation(client: TestClient, setup, db: Session) -> None:
+    event, standard, h = setup
+    vip = make_ticket_type(db, event, name="VIP")
+    c = create(client, event, h, ticket_type_ids=[str(standard.id)]).json()
+    url = f"{API}/campaigns/{c['id']}"
+    resp = client.patch(url, json={"ticket_type_ids": [str(vip.id)]}, headers=h)
+    assert resp.json()["ticket_type_ids"] == [str(vip.id)]
+    assert (
+        client.patch(url, json={"ticket_type_ids": []}, headers=h).json()["ticket_type_ids"] == []
+    )
+
+    stranger = auth_headers(make_user(db))
+    assert client.patch(url, json={"discount_value": 5}, headers=stranger).status_code == 403

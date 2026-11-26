@@ -36,9 +36,10 @@ from app.models.enums import (
     SeatingMode,
     VerificationStatus,
 )
+from app.schemas.campaigns import CampaignUpdate
 from app.schemas.orders import AttendeeIn, OrderCreate, OrderLineIn
 from app.schemas.tickets import CheckInByTicketRequest, CheckInRequest
-from app.services import checkin, refunds, seating
+from app.services import campaigns, checkin, refunds, seating
 from app.services import orders as orders_svc
 from app.services.payments import activation, checkout
 from app.services.payments.gateway import SimulatedGateway
@@ -189,6 +190,53 @@ def test_promo_code_never_exceeds_max_redemptions(
         assert fresh is not None and fresh.redemption_count == limit
     discounted = select(Order.id).where(Order.event_id == ev.id, Order.discount_minor > 0)
     assert count(parallel_engine, discounted) == limit
+
+
+@pytest.mark.parametrize("round_", range(3))
+def test_lowering_promo_limit_during_redemptions_never_leaves_it_overshot(
+    world: Committed, parallel_engine: Engine, round_: int
+) -> None:
+    """The organizer lowers ``max_redemptions`` while buyers redeem the code. The edit locks
+    the campaign row, so it either sees the latest count (and is refused if already above the
+    new limit) or redemptions after it obey the new limit: never ``count > limit``."""
+    new_limit = 2
+    ev = world.event(paid_sales_active=True)
+    owner_id = world.user_ids[0]
+    types = [make_ticket_type(world.db, ev, price_minor=1_000_000) for _ in range(N)]
+    campaign = make_campaign(world.db, ev, code=f"EDIT{round_}X", value=10, max_redemptions=N)
+    buyers = [world.user().id for _ in range(N)]
+    world.commit()
+
+    def act(db: Session, i: int) -> Any:
+        if i == 0:
+            owner = db.get(User, owner_id)
+            assert owner is not None
+            campaigns.update(db, owner, campaign.id, CampaignUpdate(max_redemptions=new_limit))
+            return "edited"
+        user = db.get(User, buyers[i])
+        assert user is not None
+        orders_svc.create_order(
+            db, user, order_data(ev.id, types[i].id, promo_code=f"EDIT{round_}X")
+        )
+        return "redeemed"
+
+    outcome = run_parallel(parallel_engine, N, act)
+
+    assert set(outcome.counts) <= {
+        "edited",
+        "limit_below_redemptions",
+        "redeemed",
+        "promo_exhausted",
+    }
+    with Session(parallel_engine) as s:
+        fresh = s.get(PromotionalCampaign, campaign.id)
+        assert fresh is not None
+        assert fresh.redemption_count <= (fresh.max_redemptions or 0)
+        if outcome.counts["edited"]:
+            assert fresh.max_redemptions == new_limit
+        else:
+            assert fresh.max_redemptions == N and fresh.redemption_count > new_limit
+    assert outcome.counts["redeemed"] == fresh.redemption_count
 
 
 # ------------------------------------------------------------------ seats (BE-30)

@@ -36,7 +36,20 @@ class CampaignCreate(BaseModel):
 
 
 class CampaignUpdate(BaseModel):
+    """Only the fields sent change. Orders already placed keep the discount they got."""
+
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    discount_type: DiscountType | None = None
+    discount_value: int | None = Field(
+        default=None, gt=0, description="percent 1–100, or fixed KZT minor units"
+    )
+    code: str | None = Field(
+        default=None,
+        min_length=4,
+        max_length=32,
+        pattern=r"^[A-Z0-9]+$",
+        description="New promo code; the old one stops working, the Campaign QR keeps working",
+    )
     starts_at: AwareDatetime | None = None
     ends_at: AwareDatetime | None = None
     max_redemptions: int | None = Field(default=None, gt=0)
