@@ -30,6 +30,7 @@ from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundErr
 from app.models import Event, Order, Seat, SeatHold, User, Venue, VenueRow, VenueSection
 from app.models.enums import EventStatus, OrderStatus, SeatingMode
 from app.schemas.seating import RowRead, SeatMapRead, SeatRead, SectionRead
+from app.services.venues import SEAT_ORDER
 
 
 def _now() -> datetime:
@@ -47,7 +48,7 @@ def _seat_rows(
     )
     if seat_ids is not None:
         stmt = stmt.where(Seat.id.in_(seat_ids))
-    stmt = stmt.order_by(VenueSection.sort_order, VenueRow.sort_order, Seat.created_at)
+    stmt = stmt.order_by(VenueSection.sort_order, VenueRow.sort_order, *SEAT_ORDER)
     return list(db.execute(stmt).tuples().all())
 
 

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     smtp_timeout_seconds: float = 5.0
     # Public base URL of this API (links to PDFs etc. in emails)
     api_base_url: str = "http://localhost:8000"
+    # Address clients use to reach this API, for links returned in API responses (cover images,
+    # calendar files). Empty → the address of the incoming request (works behind a proxy that
+    # forwards Host / X-Forwarded-Proto); outside a request → api_base_url.
+    public_api_url: str = ""
 
     # Object storage (S3-compatible: SeaweedFS in docker compose, MinIO/AWS S3 also work)
     s3_endpoint_url: str = "http://localhost:9000"

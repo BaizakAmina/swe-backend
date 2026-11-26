@@ -21,6 +21,7 @@ class EventBase(BaseModel):
     description: str | None = None
     category: str | None = Field(default=None, max_length=50)
     cover_image_key: str | None = None
+    refund_policy: str | None = Field(default=None, max_length=2000)
     location_name: str | None = Field(default=None, max_length=200)
     location_address: str | None = Field(default=None, max_length=500)
     venue_id: uuid.UUID | None = None
@@ -49,6 +50,7 @@ class EventUpdate(BaseModel):
     description: str | None = None
     category: str | None = Field(default=None, max_length=50)
     cover_image_key: str | None = None
+    refund_policy: str | None = Field(default=None, max_length=2000)
     location_name: str | None = Field(default=None, max_length=200)
     location_address: str | None = Field(default=None, max_length=500)
     venue_id: uuid.UUID | None = None
@@ -85,6 +87,8 @@ class EventRead(ORMModel):
     description: str | None
     category: str | None
     cover_image_key: str | None
+    cover_image_url: str | None = None
+    refund_policy: str | None
     location_name: str | None
     location_address: str | None
     venue_id: uuid.UUID | None
@@ -114,6 +118,7 @@ class EventSummary(ORMModel):
     title: str
     category: str | None
     cover_image_key: str | None
+    cover_image_url: str | None = None
     location_name: str | None
     starts_at: datetime
     ends_at: datetime
@@ -121,6 +126,8 @@ class EventSummary(ORMModel):
     status: EventStatus
     lifecycle: EventLifecycle
     visibility: EventVisibility
+    capacity: int
+    sold: int = 0
     min_price_minor: int | None = None
     currency: str = "KZT"
 
